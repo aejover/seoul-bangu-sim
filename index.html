@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+	<title>서울 방구 시뮬레이터</title>
+	<meta name="description" content="항문 크기가 방구 세기를 결정하는 서울 거리 3D 시뮬레이터. 세게 뀌면 하늘을 날고 페라리가 날아갑니다.">
+	<meta name="theme-color" content="#0c0d10">
+	<meta property="og:title" content="서울 방구 시뮬레이터">
+	<meta property="og:description" content="항문 크기가 방구 세기를 결정합니다 · F = 2 · P · A">
+	<meta property="og:type" content="website">
+	<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Crect width='10' height='10' fill='%23ff6726'/%3E%3Crect x='2' y='3' width='2' height='2'/%3E%3Crect x='6' y='3' width='2' height='2'/%3E%3C/svg%3E">
+	<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+	<link rel="stylesheet" href="style.css">
+	<script type="importmap">
+	{
+		"imports": {
+			"three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.webgpu.js",
+			"three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.webgpu.js",
+			"three/tsl": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.tsl.js",
+			"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"
+		}
+	}
+	</script>
+</head>
+<body>
+	<div id="app"></div>
+
+	<div id="words"></div>
+
+	<header id="title">
+		<h1>서울 방구 시뮬레이터</h1>
+		<p>항문 크기가 방구 세기를 결정합니다 · F = 2 · P · A</p>
+	</header>
+
+	<div id="toast"></div>
+
+	<aside id="panel">
+		<section class="block">
+			<div class="row between">
+				<h2>항문 지름</h2>
+				<output id="diameterValue">28 mm</output>
+			</div>
+			<div class="ringRow">
+				<svg id="ring" viewBox="0 0 120 120" aria-hidden="true">
+					<circle cx="60" cy="60" r="56" class="ringBg"/>
+					<circle id="ringHole" cx="60" cy="60" r="14"/>
+					<circle id="ringLift" cx="60" cy="60" r="44" class="ringLift"/>
+				</svg>
+				<div class="gradeBox">
+					<div id="gradeName">뿌웅!!</div>
+					<div id="gradeTier">국밥 세 그릇</div>
+				</div>
+			</div>
+			<input id="diameter" type="range" min="2" max="110" step="1" value="28" aria-label="항문 지름 (mm)">
+			<div class="scale"><span>2 바늘구멍</span><span>보통</span><span>83 이륙선</span><span>110</span></div>
+		</section>
+
+		<section class="block stats">
+			<div><span>개구 면적</span><b id="statArea">-</b></div>
+			<div><span>장내 압력</span><b>80 kPa</b></div>
+			<div><span>분출 추력</span><b id="statForce">-</b></div>
+			<div><span>소리 크기</span><b id="statDb">-</b></div>
+			<div><span>음높이</span><b id="statHz">-</b></div>
+			<div><span>가스 반경</span><b id="statReach">-</b></div>
+		</section>
+
+		<section class="block">
+			<div class="row between"><h3>장 속 가스</h3><span id="tankText">100%</span></div>
+			<div class="bar"><i id="tankBar"></i></div>
+			<div class="row gap">
+				<button id="fartButton" class="primary">방구 뀌기<small>Space 꾹</small></button>
+				<button id="eatButton">고구마 먹기 🍠</button>
+			</div>
+		</section>
+
+		<section class="block">
+			<div class="row between"><h3>시간</h3><output id="timeValue">17:24</output></div>
+			<input id="time" type="range" min="6" max="19.5" step="0.05" value="17.4" aria-label="시간">
+			<div class="row between small">
+				<label><input id="mute" type="checkbox"> 소리 끄기</label>
+				<span id="counter">날려버린 페라리 0대</span>
+			</div>
+		</section>
+	</aside>
+
+	<footer id="help">
+		<b>WASD</b> 걷기 · <b>Shift</b> 달리기 · <b>Space</b> 꾹 = 방구<br>
+		공중에서 <b>W/S</b> 기울기 · <b>A/D</b> 방향 · <b>R</b> 제자리 · 마우스 드래그 = 카메라
+	</footer>
+
+	<div id="stick" aria-hidden="true"><i id="stickKnob"></i></div>
+
+	<div id="flight" hidden>
+		<span>고도 <b id="altitude">0</b> m</span>
+		<span>속도 <b id="speed">0</b> km/h</span>
+	</div>
+
+	<div id="loading">
+		<div class="loadingCard">
+			<div class="face"><i></i><i></i></div>
+			<h2>서울 불러오는 중</h2>
+			<p id="loadingText">렌더러 준비 중...</p>
+		</div>
+	</div>
+
+	<noscript><p style="position:fixed;inset:0;display:grid;place-items:center;margin:0;z-index:20;background:#0c0d10">JavaScript 를 켜야 서울에 갈 수 있어요.</p></noscript>
+
+	<script type="module" src="src/main.js"></script>
+</body>
+</html>
