@@ -81,7 +81,7 @@ export class World {
 
 		for ( const b of list ) {
 
-			if ( x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1 && ( best === null || b.top > best.top ) ) best = b;
+			if ( ! b.gone && x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1 && ( best === null || b.top > best.top ) ) best = b;
 
 		}
 

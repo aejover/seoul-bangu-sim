@@ -349,7 +349,11 @@ export function buildSigns( world, spawn, radius = 340 ) {
 	const curb = world.curb;
 	let forced = false;
 
-	for ( const t of world.towers ) {
+	// 빌딩마다 자기 간판이 merge 된 지오메트리의 어느 정점 범위인지 기억한다 (빌딩이 날아가면 지운다)
+	const ranges = new Map();
+	const BOX_VERTS = 24;
+
+	const signsOf = ( t ) => {
 
 		const dist = Math.hypot( t.cx, t.cz );
 
@@ -363,7 +367,7 @@ export function buildSigns( world, spawn, radius = 340 ) {
 
 		}
 
-		if ( dist > radius ) continue;
+		if ( dist > radius ) return;
 
 		const faces = [
 			{ n: new THREE.Vector3( 1, 0, 0 ), c: new THREE.Vector3( t.x1, 0, t.cz ), len: t.d },
@@ -441,10 +445,20 @@ export function buildSigns( world, spawn, radius = 340 ) {
 
 		}
 
+	};
+
+	for ( const t of world.towers ) {
+
+		const start = [ quads.position.length / 3, backs.length * BOX_VERTS, crossBars.length * BOX_VERTS ];
+		signsOf( t );
+		const end = [ quads.position.length / 3, backs.length * BOX_VERTS, crossBars.length * BOX_VERTS ];
+		if ( end.some( ( e, k ) => e > start[ k ] ) ) ranges.set( t, { start, end } );
+
 	}
 
 	const group = new THREE.Group();
 	group.name = 'SeoulSigns';
+	const meshes = [ null, null, null ];
 
 	const glow = uniform( 4 );
 	const signMaterial = new THREE.MeshBasicNodeMaterial();
@@ -452,12 +466,14 @@ export function buildSigns( world, spawn, radius = 340 ) {
 	const signs = new THREE.Mesh( quads.build(), signMaterial );
 	signs.name = 'Signs';
 	group.add( signs );
+	meshes[ 0 ] = signs;
 
 	if ( backs.length ) {
 
 		const backMesh = new THREE.Mesh( mergeGeometries( backs ), new THREE.MeshStandardMaterial( { color: 0x202124, metalness: 0.4, roughness: 0.55 } ) );
 		backMesh.receiveShadow = true;
 		group.add( backMesh );
+		meshes[ 1 ] = backMesh;
 
 	}
 
@@ -465,11 +481,32 @@ export function buildSigns( world, spawn, radius = 340 ) {
 
 		const crossMaterial = new THREE.MeshBasicNodeMaterial();
 		crossMaterial.colorNode = color( 1.0, 0.04, 0.05 ).mul( mix( 1.5, 40, nightness ) );
-		group.add( new THREE.Mesh( mergeGeometries( crossBars ), crossMaterial ) );
+		meshes[ 2 ] = new THREE.Mesh( mergeGeometries( crossBars ), crossMaterial );
+		group.add( meshes[ 2 ] );
 
 	}
 
-	return { group, glow };
+	// 빌딩이 날아가면 그 빌딩 간판의 정점을 한 점으로 모아 안 보이게 한다
+	const remove = ( tower ) => {
+
+		const r = ranges.get( tower );
+		if ( ! r ) return;
+
+		for ( let k = 0; k < 3; k ++ ) {
+
+			const mesh = meshes[ k ];
+			if ( ! mesh || r.end[ k ] <= r.start[ k ] ) continue;
+			const p = mesh.geometry.attributes.position;
+			for ( let i = r.start[ k ]; i < r.end[ k ]; i ++ ) p.setXYZ( i, 0, - 50, 0 );
+			p.needsUpdate = true;
+
+		}
+
+		ranges.delete( tower );
+
+	};
+
+	return { group, glow, remove };
 
 }
 
@@ -497,7 +534,7 @@ function roadSignTexture( name, english, left, right ) {
 	ctx.textBaseline = 'middle';
 	ctx.font = `64px ${ FONT }`;
 	ctx.fillText( name, 256, 52 );
-	ctx.font = 'bold 24px "Noto Sans KR", Arial, sans-serif';
+	ctx.font = '24px "Jua", Arial, sans-serif';
 	ctx.fillText( english, 256, 100 );
 	ctx.font = 'bold 30px Arial, sans-serif';
 	ctx.textAlign = 'left';

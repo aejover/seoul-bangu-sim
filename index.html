@@ -13,7 +13,7 @@
 	<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Jua&display=swap" rel="stylesheet">
 	<link rel="stylesheet" href="style.css">
 	<script type="importmap">
 	{
@@ -78,21 +78,28 @@
 		</section>
 
 		<section class="block">
+			<div class="row between"><h3>카메라 시점</h3><span class="small">C 다음</span></div>
+			<div id="cameraModes"></div>
+		</section>
+
+		<section class="block">
 			<div class="row between"><h3>시간</h3><output id="timeValue">17:24</output></div>
 			<input id="time" type="range" min="6" max="19.5" step="0.05" value="17.4" aria-label="시간">
 			<div class="row between small">
 				<label><input id="mute" type="checkbox"> 소리 끄기</label>
-				<span id="counter">날려버린 페라리 0대</span>
+				<span id="counter">페라리 0대 · 빌딩 0채</span>
 			</div>
 		</section>
 	</aside>
 
 	<footer id="help">
-		<b>WASD</b> 걷기 · <b>Shift</b> 달리기 · <b>Space</b> 꾹 = 방구<br>
-		공중에서 <b>W/S</b> 기울기 · <b>A/D</b> 방향 · <b>R</b> 제자리 · 마우스 드래그 = 카메라
+		<b>WASD</b> 걷기 · <b>Shift</b> 달리기 · <b>Space</b> 꾹 = 방구 · <b>E</b> 페라리 타기<br>
+		공중에서 <b>W/S</b> 기울기 · <b>A/D</b> 방향 · <b>R</b> 제자리 · <b>1~5</b> 시점 · 드래그 = 카메라
 	</footer>
 
 	<div id="stick" aria-hidden="true"><i id="stickKnob"></i></div>
+	<button id="carButton" hidden>🏎️ 타기 (E)</button>
+	<div id="shot"></div>
 
 	<div id="flight" hidden>
 		<span>고도 <b id="altitude">0</b> m</span>

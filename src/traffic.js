@@ -287,6 +287,17 @@ export class Traffic {
 
 			}
 
+			if ( car.mode === 'player' ) continue; // 내가 운전 중 (drive() 에서 움직인다)
+
+			if ( car.mode === 'parked' ) {
+
+				// 내가 내린 차: 한동안 서 있다가 멀어지면 다른 데서 다시 달린다
+				car.parkTime += dt;
+				if ( car.parkTime > 25 && car.pos.distanceTo( me.position ) > 80 ) this.spawn( car, me.position );
+				continue;
+
+			}
+
 			if ( car.mode === 'wreck' ) {
 
 				car.wreckTime += dt;
@@ -325,7 +336,7 @@ export class Traffic {
 
 				if ( ahead > 0 && ahead < 30 && lateral < 2.2 && me.position.y < 3 ) {
 
-					if ( ahead - HALF_LEN < gap ) {
+					if ( ahead - HALF_LEN - ( this.player ? 1.6 : 0 ) < gap ) {
 
 						gap = ahead - HALF_LEN;
 						blockedByMe = true;
@@ -488,7 +499,7 @@ export class Traffic {
 
 		for ( const car of this.cars ) {
 
-			if ( car.mode === 'fly' || car.mode === 'wreck' ) continue;
+			if ( car.mode === 'fly' || car.mode === 'wreck' || car.mode === 'player' ) continue;
 
 			const rel = car.pos.clone().sub( origin );
 			const dist = rel.length();
@@ -537,7 +548,7 @@ export class Traffic {
 
 		for ( const car of this.cars ) {
 
-			if ( car.mode === 'fly' || car.mode === 'wreck' ) continue;
+			if ( car.mode === 'fly' || car.mode === 'wreck' || car.mode === 'player' ) continue;
 			const rel = car.pos.clone().sub( center );
 			const dist = rel.length();
 			if ( dist > radius ) continue;
@@ -553,6 +564,152 @@ export class Traffic {
 		}
 
 		if ( launched ) this.events.push( { type: 'launch', count: launched } );
+
+	}
+
+	// ------------------------------------------------------------------
+	// 내가 페라리를 탄다
+
+	nearestCar( pos, maxDist = 4.5 ) {
+
+		let best = null, bestD = maxDist;
+
+		for ( const car of this.cars ) {
+
+			if ( car.mode === 'fly' || car.mode === 'player' || ! car.root.visible ) continue;
+			const d = Math.hypot( car.pos.x - pos.x, car.pos.z - pos.z );
+			if ( d < bestD && Math.abs( car.pos.y - 0.5 - pos.y ) < 1.5 ) {
+
+				bestD = d;
+				best = car;
+
+			}
+
+		}
+
+		return best;
+
+	}
+
+	enter( car ) {
+
+		// 뒤집힌 차면 바로 세운다
+		car.mode = 'player';
+		car.steer = 0;
+		car.wobble = 0;
+		car.root.scale.setScalar( 1 );
+		car.pos.y = this.world.heightAt( car.pos.x, car.pos.z ) + 0.5;
+		const fwd = new THREE.Vector3( 0, 0, 1 ).applyQuaternion( car.root.quaternion ).setY( 0 );
+		if ( fwd.lengthSq() < 0.01 ) fwd.copy( car.heading );
+		car.heading.copy( fwd.normalize() );
+		this.player = car;
+		return car;
+
+	}
+
+	exit() {
+
+		const car = this.player;
+		if ( ! car ) return null;
+		car.mode = 'parked';
+		car.parkTime = 0;
+		car.speed = 0;
+		this.player = null;
+		return car;
+
+	}
+
+	// 운전석 왼쪽 문 앞 (내릴 때 서는 자리)
+	doorSide( car, target = new THREE.Vector3() ) {
+
+		const left = new THREE.Vector3( car.heading.z, 0, - car.heading.x );
+		return target.copy( car.pos ).addScaledVector( left, 1.6 ).setY( this.world.heightAt( car.pos.x + left.x * 1.6, car.pos.z + left.z * 1.6 ) );
+
+	}
+
+	drive( dt, input, fart, me ) {
+
+		const car = this.player;
+		if ( ! car ) return;
+
+		const max = fart.active ? 60 : 36;
+		let a = 0;
+		if ( input.forward > 0 ) a = 11 * input.forward;
+		else if ( input.forward < 0 ) a = car.speed > 0.5 ? - 18 : - 6;
+		else a = - Math.sign( car.speed ) * Math.min( Math.abs( car.speed ) / dt, 2.5 );
+
+		// 방구 부스터: 배기구로 뀐다
+		if ( fart.active ) a += fart.physics.force / 40;
+
+		car.speed = THREE.MathUtils.clamp( car.speed + a * dt, - 8, max );
+
+		const steerMax = 0.55 / ( 1 + Math.abs( car.speed ) * 0.04 );
+		car.steer += ( - input.turn * steerMax - car.steer ) * Math.min( 1, dt * 6 );
+		const yawRate = car.speed * Math.tan( car.steer ) / 2.65;
+		car.heading.applyAxisAngle( UP, yawRate * dt ).normalize();
+
+		const next = car.pos.clone().addScaledVector( car.heading, car.speed * dt );
+		const nose = next.clone().addScaledVector( car.heading, Math.sign( car.speed || 1 ) * 2.1 );
+		const ground = this.world.heightAt( nose.x, nose.z );
+
+		if ( ground > car.pos.y + 0.2 ) {
+
+			// 건물에 쾅
+			if ( Math.abs( car.speed ) > 5 ) {
+
+				this.sound.thud( Math.min( 1, Math.abs( car.speed ) / 25 ), 0 );
+				this.events.push( { type: 'crash', speed: Math.abs( car.speed ) } );
+
+			}
+
+			car.speed *= - 0.25;
+
+		} else {
+
+			car.pos.copy( next );
+
+		}
+
+		car.pos.y += ( this.world.heightAt( car.pos.x, car.pos.z ) + 0.5 - car.pos.y ) * Math.min( 1, dt * 12 );
+
+		// 다른 차를 들이받으면 날려 버린다
+		for ( const other of this.cars ) {
+
+			if ( other === car || other.mode === 'fly' || other.mode === 'wreck' ) continue;
+			const d = other.pos.distanceTo( car.pos );
+
+			if ( d < 3.4 ) {
+
+				const push = other.pos.clone().sub( car.pos ).setY( 0 ).normalize();
+
+				if ( Math.abs( car.speed ) > 7 ) {
+
+					this.launch( other, push.lerp( car.heading, 0.5 ).normalize(), Math.abs( car.speed ) * 22 );
+					this.events.push( { type: 'launch', count: 1 } );
+					this.sound.thud( 1, 0 );
+					car.speed *= 0.75;
+
+				} else {
+
+					car.speed *= 0.5;
+					car.pos.addScaledVector( push, - ( 3.4 - d ) * 0.5 );
+
+				}
+
+			}
+
+		}
+
+		const roll = car.speed * dt / this.wheelRadius * this.modelForward;
+		for ( const w of car.wheels ) w.rotation.x += roll;
+
+		car.root.position.copy( car.pos );
+		car.root.rotation.set( 0, Math.atan2( car.heading.x, car.heading.z ), 0 );
+
+		// 방구는 배기구(차 뒤)에서 나온다
+		me.position.copy( car.pos ).setY( car.pos.y - 0.5 );
+		me.jetOrigin.copy( car.pos ).addScaledVector( car.heading, - 2.3 ).setY( car.pos.y - 0.05 );
+		me.jetDirection.copy( car.heading ).negate().setY( - 0.15 ).normalize();
 
 	}
 

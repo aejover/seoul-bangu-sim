@@ -281,4 +281,69 @@ export class Sound {
 
 	}
 
+	// 따르릉 자전거 벨
+	bell( distance = 10 ) {
+
+		if ( ! this.ctx ) return;
+		const ctx = this.ctx, now = ctx.currentTime;
+		const level = 0.1 / ( 1 + distance / 12 );
+
+		for ( const f of [ 2350, 3170 ] ) {
+
+			const o = ctx.createOscillator();
+			o.frequency.value = f;
+			const g = ctx.createGain();
+			g.gain.value = 0;
+
+			// 망치가 종을 여러 번 때린다
+			for ( let i = 0; i < 9; i ++ ) {
+
+				const t = now + i * 0.055;
+				g.gain.setValueAtTime( level, t );
+				g.gain.exponentialRampToValueAtTime( level * 0.25, t + 0.05 );
+
+			}
+
+			g.gain.exponentialRampToValueAtTime( 0.0001, now + 1.1 );
+			o.connect( g ).connect( this.master );
+			o.start( now );
+			o.stop( now + 1.2 );
+
+		}
+
+	}
+
+	// 사람 비명 (짧게 미끄러지는 소리)
+	scream( distance = 10, female = false ) {
+
+		if ( ! this.ctx ) return;
+		const ctx = this.ctx, now = ctx.currentTime;
+		const level = 0.07 / ( 1 + distance / 10 );
+		const base = female ? 720 : 430;
+		const o = ctx.createOscillator();
+		o.type = 'sawtooth';
+		o.frequency.setValueAtTime( base, now );
+		o.frequency.linearRampToValueAtTime( base * 1.5, now + 0.15 );
+		o.frequency.exponentialRampToValueAtTime( base * 0.8, now + 0.9 );
+		const vib = ctx.createOscillator();
+		vib.frequency.value = 7;
+		const vibGain = ctx.createGain();
+		vibGain.gain.value = base * 0.04;
+		vib.connect( vibGain ).connect( o.frequency );
+		const formant = ctx.createBiquadFilter();
+		formant.type = 'bandpass';
+		formant.frequency.value = female ? 1500 : 1000;
+		formant.Q.value = 2;
+		const g = ctx.createGain();
+		g.gain.setValueAtTime( 0, now );
+		g.gain.linearRampToValueAtTime( level, now + 0.05 );
+		g.gain.exponentialRampToValueAtTime( 0.0001, now + 1.0 );
+		o.connect( formant ).connect( g ).connect( this.master );
+		o.start( now );
+		vib.start( now );
+		o.stop( now + 1.05 );
+		vib.stop( now + 1.05 );
+
+	}
+
 }

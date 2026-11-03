@@ -12,6 +12,9 @@ import { Character } from './character.js';
 import { Traffic } from './traffic.js';
 import { FartSystem, fartPhysics, LIFTOFF_DIAMETER } from './fart.js';
 import { Sound } from './audio.js';
+import { People } from './people.js';
+import { Destruction } from './destruction.js';
+import { Director, CAMERA_MODES } from './director.js';
 import { createSeoulRoadMaterial, makeGinkgo, buildSigns, buildStreetSigns, buildPatio, buildLandmarks, nightness } from './seoul.js';
 
 const search = new URLSearchParams( location.search );
@@ -28,6 +31,8 @@ const parameters = {
 	pipeline: search.get( 'pipeline' ) || ( navigator.gpu ? 'meshlet' : 'default' ),
 	haze: 1,
 	cars: parseInt( search.get( 'cars' ) || ( low ? '24' : '40' ) ),
+	walkers: parseInt( search.get( 'people' ) || ( low ? '14' : '30' ) ),
+	cyclists: parseInt( search.get( 'bikes' ) || ( low ? '4' : '8' ) ),
 	pixelRatio: low ? 1 : 1.5,
 	shadowSize: low ? 2048 : 4096
 };
@@ -38,7 +43,11 @@ const CAMERA_OFFSET = new THREE.Vector3( 0.9, 0.3, 5.4 );
 
 let camera, scene, renderer, controls, timer, renderPipeline, scenePass;
 let sky, sun, sunLight, moonLight, pmremGenerator, envScene, envRenderTarget, cityBounds;
-let city, world, me, traffic, fart, sound, signs;
+let city, world, me, traffic, fart, sound, signs, people, tilesGroup, destruction, director;
+let controlYaw = Math.PI;
+let destroyedTotal = 0;
+let nearCar = null;
+const directorEvents = [];
 
 const keys = {};
 const stick = { x: 0, y: 0 };
@@ -48,6 +57,7 @@ let maxAltitude = 0;
 let lastState = 'ground';
 let frameCount = - 1;
 const cameraFree = new THREE.Vector3();
+const _carVel = new THREE.Vector3();
 const followTarget = new THREE.Vector3();
 
 const $ = ( id ) => document.getElementById( id );
@@ -69,7 +79,7 @@ async function init() {
 	// 간판용 한글 폰트
 	const fonts = Promise.all( [
 		document.fonts.load( '80px "Black Han Sans"', '가나다치킨' ),
-		document.fonts.load( '700 20px "Noto Sans KR"', '가' )
+		document.fonts.load( '20px "Jua"', '가나다' )
 	] ).catch( () => {} );
 
 	renderer = new THREE.WebGPURenderer( { antialias: true } );
@@ -162,6 +172,15 @@ async function init() {
 	traffic = new Traffic( scene, world, sound, { count: parameters.cars } );
 	await traffic.load();
 
+	// ---- 사람들
+	setLoading( '서울 사람들 얼굴 만드는 중...' );
+	people = new People( scene, world, sound, { walkers: parameters.walkers, cyclists: parameters.cyclists } );
+	await people.load();
+	people.spawnAll( SPAWN );
+
+	destruction = new Destruction( scene, tilesGroup, world, sunLight, sound );
+	destruction.onTower = ( box ) => signs.remove( box );
+
 	// ---- 카메라
 	controls = new OrbitControls( camera, renderer.domElement );
 	controls.enableDamping = true;
@@ -170,6 +189,8 @@ async function init() {
 	controls.maxDistance = 80;
 	controls.maxPolarAngle = Math.PI * 0.53;
 	snapCamera();
+
+	director = new Director( camera, world, renderer.domElement );
 
 	setupUI();
 	setupInput();
@@ -213,7 +234,7 @@ async function init() {
 		renderer.setAnimationLoop( animate );
 
 	}
-	window.__sim = { me, traffic, fart, world, camera, controls, scene, renderer, cameraFree, setTime: ( t ) => {
+	window.__sim = { me, traffic, fart, world, camera, controls, scene, renderer, cameraFree, people, destruction, director, setCameraMode, toggleCar, setTime: ( t ) => {
 
 		parameters.timeOfDay = t;
 		updateSun();
@@ -243,11 +264,11 @@ function generateCity() {
 
 	const cityGroup = city.build( materials );
 
-	// 원래 있던 자동차는 전부 삭제
+	// 원래 있던 자동차와 가만히 서 있는 사람들은 전부 삭제 (관절 있는 사람들로 바꾼다)
 	const oldCars = [];
 	cityGroup.traverse( ( o ) => {
 
-		if ( o.name.startsWith( 'Car' ) ) oldCars.push( o );
+		if ( o.name.startsWith( 'Car' ) || o.name === 'People' ) oldCars.push( o );
 
 	} );
 
@@ -292,7 +313,7 @@ function generateCity() {
 	const spanZ = cityD + street;
 	const tiles = parameters.tiles;
 	const gpuDriven = parameters.pipeline === 'meshlet';
-	const tilesGroup = gpuDriven ? new THREE.BundleGroup() : new THREE.Group();
+	tilesGroup = gpuDriven ? new THREE.BundleGroup() : new THREE.Group();
 
 	for ( let x = 0; x < tiles; x ++ ) {
 
@@ -301,7 +322,6 @@ function generateCity() {
 			const tile = ( x === 0 && z === 0 ) ? cityGroup : cityGroup.clone();
 			tile.position.set( ( x - ( tiles - 1 ) / 2 ) * spanX, 0, ( z - ( tiles - 1 ) / 2 ) * spanZ );
 			tilesGroup.add( tile );
-			clearAround( tile, 'People', SPAWN, 13 );
 
 		}
 
@@ -327,38 +347,6 @@ function generateCity() {
 	scene.add( buildLandmarks( { x: floorW / 2, z: floorD / 2 } ) );
 
 	updateSun();
-
-}
-
-// 내가 서 있는 자리 주변의 보행자는 비켜 준다
-function clearAround( tile, name, center, radius ) {
-
-	const m = new THREE.Matrix4();
-	const p = new THREE.Vector3();
-	const zero = new THREE.Matrix4().makeScale( 0, 0, 0 );
-
-	tile.traverse( ( o ) => {
-
-		if ( o.name !== name || ! o.isInstancedMesh ) return;
-		let changed = false;
-
-		for ( let i = 0; i < o.count; i ++ ) {
-
-			o.getMatrixAt( i, m );
-			p.setFromMatrixPosition( m ).add( tile.position );
-
-			if ( Math.hypot( p.x - center.x, p.z - center.z ) < radius ) {
-
-				o.setMatrixAt( i, zero );
-				changed = true;
-
-			}
-
-		}
-
-		if ( changed ) o.instanceMatrix.needsUpdate = true;
-
-	} );
 
 }
 
@@ -514,6 +502,97 @@ function setupUI() {
 
 	} );
 
+	// 카메라 시점 버튼
+	const row = $( 'cameraModes' );
+
+	for ( const [ i, m ] of CAMERA_MODES.entries() ) {
+
+		const b = document.createElement( 'button' );
+		b.dataset.mode = m.id;
+		b.innerHTML = `${ m.label }<small>${ i + 1 }</small>`;
+		b.addEventListener( 'click', () => setCameraMode( m.id ) );
+		row.appendChild( b );
+
+	}
+
+	refreshCameraButtons();
+
+	$( 'carButton' ).addEventListener( 'click', () => {
+
+		sound.unlock();
+		toggleCar();
+
+	} );
+
+}
+
+function setCameraMode( mode ) {
+
+	if ( mode === 'people' && director.mode === 'people' ) {
+
+		director.nextSubject();
+		return;
+
+	}
+
+	director.setMode( mode, { me } );
+	me.head.visible = mode !== 'first';
+	camera.fov = 55;
+	camera.updateProjectionMatrix();
+
+	if ( mode === 'third' ) {
+
+		controls.enabled = true;
+		snapCamera();
+
+	} else {
+
+		controls.enabled = false;
+
+	}
+
+	refreshCameraButtons();
+	const label = CAMERA_MODES.find( ( m ) => m.id === mode ).label;
+	toast( `🎥 ${ label } 시점` + ( mode === 'people' ? ' · 다시 누르면 다른 사람' : '' ) );
+
+}
+
+function refreshCameraButtons() {
+
+	for ( const b of $( 'cameraModes' ).children ) b.classList.toggle( 'on', b.dataset.mode === director.mode );
+
+}
+
+// 페라리 타기 / 내리기
+function toggleCar() {
+
+	if ( traffic.player ) {
+
+		const car = traffic.exit();
+		traffic.doorSide( car, me.position );
+		me.velocity.set( 0, 0, 0 );
+		me.yaw = Math.atan2( car.heading.x, car.heading.z );
+		me.setState( 'ground' );
+		me.group.visible = true;
+		me.shadow.visible = true;
+		controls.minDistance = 1.8;
+		toast( '🚶 내렸다' );
+
+	} else if ( nearCar && me.state === 'ground' ) {
+
+		const car = traffic.enter( nearCar );
+		me.group.visible = false;
+		me.shadow.visible = false;
+		controls.minDistance = 5;
+
+		// 차 뒤 조금 위에서 따라간다
+		followTarget.copy( car.pos ).setY( car.pos.y + 0.7 );
+		controls.target.copy( followTarget );
+		cameraFree.copy( car.pos ).addScaledVector( car.heading, - 8 ).setY( car.pos.y + 3 );
+		toast( '🏎️ 페라리 탑승! W 가속 · S 브레이크 · A/D 핸들 · Space 방구 부스터' );
+
+	}
+
 }
 
 function setupInput() {
@@ -532,8 +611,26 @@ function setupInput() {
 
 		}
 
+		if ( e.code === 'KeyE' && ! e.repeat ) toggleCar();
+		if ( e.code === 'KeyC' && ! e.repeat ) {
+
+			const i = CAMERA_MODES.findIndex( ( m ) => m.id === director.mode );
+			setCameraMode( CAMERA_MODES[ ( i + 1 ) % CAMERA_MODES.length ].id );
+
+		}
+
+		const digit = /^Digit([1-5])$/.exec( e.code );
+		if ( digit && ! e.repeat ) setCameraMode( CAMERA_MODES[ digit[ 1 ] - 1 ].id );
+		if ( e.code === 'Tab' ) {
+
+			e.preventDefault();
+			if ( director.mode === 'people' ) director.nextSubject();
+
+		}
+
 		if ( e.code === 'KeyR' ) {
 
+			if ( traffic.player ) toggleCar();
 			me.position.copy( SPAWN );
 			me.velocity.set( 0, 0, 0 );
 			me.yaw = Math.PI;
@@ -624,11 +721,21 @@ function gatherInput() {
 	const f = clamp( ( keys.KeyW || keys.ArrowUp ? 1 : 0 ) - ( keys.KeyS || keys.ArrowDown ? 1 : 0 ) - stick.y );
 	const r = clamp( ( keys.KeyD || keys.ArrowRight ? 1 : 0 ) - ( keys.KeyA || keys.ArrowLeft ? 1 : 0 ) + stick.x );
 
-	// 카메라 기준 이동 방향
+	// 카메라 기준 이동 방향 (컷이 바뀌는 연출 시점에서는 마지막으로 직접 잡던 카메라 방향)
 	const forward = new THREE.Vector3();
-	camera.getWorldDirection( forward );
-	forward.y = 0;
-	forward.normalize();
+
+	if ( director.mode === 'third' || director.mode === 'first' ) {
+
+		camera.getWorldDirection( forward );
+		forward.y = 0;
+		forward.normalize();
+		controlYaw = Math.atan2( forward.x, forward.z );
+
+	} else {
+
+		forward.set( Math.sin( controlYaw ), 0, Math.cos( controlYaw ) );
+
+	}
 	const right = new THREE.Vector3().crossVectors( forward, new THREE.Vector3( 0, 1, 0 ) );
 	const move = forward.multiplyScalar( f ).addScaledVector( right, r );
 
@@ -717,28 +824,81 @@ function animate() {
 
 	const input = gatherInput();
 
+	const driving = traffic.player !== null && traffic.player !== undefined;
+	directorEvents.length = 0;
+
 	fart.update( dt, fartHeld, me, nightness.value );
-	me.update( dt, input, world, fart );
+	if ( driving ) traffic.drive( dt, input, fart, me );
+	else me.update( dt, input, world, fart );
 	traffic.update( dt, me, fart );
+	people.update( dt, me, fart, camera );
+
+	// 아주 센 방구: 나무와 빌딩이 날아간다
+	if ( fart.active ) destruction.blast( dt, me.jetOrigin, fart.physics );
+	destruction.update( dt );
+
+	for ( const e of destruction.events ) {
+
+		if ( e.type === 'destroy' ) {
+
+			destroyedTotal += e.towers;
+			if ( e.towers ) toast( `🏢 빌딩 ${ e.towers }채 날아감!!` );
+			else if ( e.trees > 2 ) toast( `🌳 은행나무 ${ e.trees }그루 뽑힘!` );
+			directorEvents.push( 'destroy' );
+
+		}
+
+	}
+
+	destruction.events.length = 0;
+
+	// 페라리 근처면 탈 수 있다
+	nearCar = driving ? null : traffic.nearestCar( me.position );
+	$( 'carButton' ).hidden = ! ( nearCar || driving );
+	$( 'carButton' ).textContent = driving ? '🚶 내리기 (E)' : '🏎️ 타기 (E)';
+
+	// 내가 모는 차에 치여도 날아간다
+	if ( driving ) people.hit( traffic.player.pos, _carVel.copy( traffic.player.heading ).multiplyScalar( traffic.player.speed ), 2.4 );
+
+	// 달리는 차에 치인 사람은 날아간다
+	for ( const car of traffic.cars ) {
+
+		if ( car.mode === 'lane' || car.mode === 'turn' ) people.hit( car.pos, _carVel.copy( car.heading ).multiplyScalar( car.speed ) );
+		else if ( car.mode === 'fly' ) people.hit( car.pos, car.vel, 2.6 );
+
+	}
 
 	// 방구 이벤트
 	for ( const e of fart.events ) {
 
 		if ( e.type === 'word' ) popWord( e.text, me.jetOrigin, e.force, e.color );
-		else if ( e.type === 'shock' ) traffic.shock( me.position, e.force, e.radius );
-		else if ( e.type === 'empty' ) toast( '가스 부족! 고구마를 드세요 🍠' );
+		else if ( e.type === 'shock' ) {
+
+			traffic.shock( me.position, e.force, e.radius );
+			people.shock( me.position, e.force, e.radius );
+			destruction.shock( me.position, e.force, e.radius );
+			directorEvents.push( 'shock' );
+
+		} else if ( e.type === 'empty' ) toast( '가스 부족! 고구마를 드세요 🍠' );
 
 	}
 
 	fart.events.length = 0;
+
+	for ( const e of people.events ) popWord( e.text, e.pos, 4, e.color );
+	people.events.length = 0;
 
 	for ( const e of traffic.events ) {
 
 		if ( e.type === 'launch' ) {
 
 			launchedTotal += e.count;
-			$( 'counter' ).textContent = `날려버린 페라리 ${ launchedTotal }대`;
 			toast( `페라리 ${ e.count }대 날아감! 💨` );
+			directorEvents.push( 'launch' );
+
+		} else if ( e.type === 'crash' && e.speed > 12 ) {
+
+			popWord( '쾅!', traffic.player.pos.clone().setY( 1.5 ), 400, '#ffffff' );
 
 		} else if ( e.type === 'honk' && Math.random() < 0.5 ) {
 
@@ -749,11 +909,17 @@ function animate() {
 	}
 
 	traffic.events.length = 0;
+	$( 'counter' ).textContent = `페라리 ${ launchedTotal }대 · 빌딩 ${ destroyedTotal }채`;
 
 	// 상태 변화 알림
 	if ( me.state !== lastState ) {
 
-		if ( me.state === 'air' && fart.active ) toast( '🚀 방구 로켓 이륙!' );
+		if ( me.state === 'air' && fart.active ) {
+
+			toast( '🚀 방구 로켓 이륙!' );
+			directorEvents.push( 'liftoff' );
+
+		}
 		if ( lastState === 'air' ) {
 
 			sound.thud( Math.min( 1, ( me.lastImpact || 0 ) / 10 ) );
@@ -772,14 +938,14 @@ function animate() {
 
 	// 비행 정보
 	const altitude = Math.max( 0, me.position.y - world.heightAt( me.position.x, me.position.z ) );
-	const flying = me.state === 'air';
-	$( 'flight' ).hidden = ! flying;
+	const flying = me.state === 'air' && ! driving;
+	$( 'flight' ).hidden = ! flying && ! driving;
 
-	if ( flying ) {
+	if ( flying || driving ) {
 
 		maxAltitude = Math.max( maxAltitude, me.position.y );
 		$( 'altitude' ).textContent = me.position.y.toFixed( 0 );
-		$( 'speed' ).textContent = ( me.velocity.length() * 3.6 ).toFixed( 0 );
+		$( 'speed' ).textContent = ( ( driving ? Math.abs( traffic.player.speed ) : me.velocity.length() ) * 3.6 ).toFixed( 0 );
 
 	}
 
@@ -787,16 +953,32 @@ function animate() {
 	$( 'tankText' ).textContent = `${ Math.round( fart.tank * 100 ) }%`;
 
 	// 카메라: 나를 따라가고, 벽에 막히면 당겨지고, 방구 세기만큼 흔들린다
-	camera.position.copy( cameraFree );
-	const target = me.position.clone().add( new THREE.Vector3( 0, me.state === 'down' ? 0.4 : 1.3, 0 ) );
-	const delta = target.clone().sub( followTarget ).multiplyScalar( Math.min( 1, dt * ( flying ? 6 : 10 ) ) );
+	const target = me.position.clone().add( new THREE.Vector3( 0, me.state === 'down' ? 0.4 : ( driving ? 1.2 : 1.3 ), 0 ) );
+	const delta = target.clone().sub( followTarget ).multiplyScalar( Math.min( 1, dt * ( flying || driving ? 6 : 10 ) ) );
 	followTarget.add( delta );
-	camera.position.add( delta );
-	controls.target.copy( followTarget );
-	if ( flying && altitude > 8 ) controls.maxDistance = 120;
-	controls.update();
-	cameraFree.copy( camera.position );
-	keepCameraOutside();
+
+	const directed = director.mode !== 'third' && director.update( { dt, me, people, traffic, fart, driving, events: directorEvents } );
+
+	if ( directed ) {
+
+		// 3인칭으로 돌아올 때를 위해 따라가기만 한다
+		cameraFree.add( delta );
+		controls.target.copy( followTarget );
+
+	} else {
+
+		camera.position.copy( cameraFree );
+		camera.position.add( delta );
+		controls.target.copy( followTarget );
+		if ( flying && altitude > 8 ) controls.maxDistance = 120;
+		controls.update();
+		cameraFree.copy( camera.position );
+		keepCameraOutside();
+
+	}
+
+	$( 'shot' ).textContent = director.label;
+	document.body.classList.toggle( 'cinema', director.mode === 'auto' );
 
 	const s = fart.shake;
 	camera.position.add( new THREE.Vector3( ( Math.random() - 0.5 ) * s, ( Math.random() - 0.5 ) * s, ( Math.random() - 0.5 ) * s ) );
