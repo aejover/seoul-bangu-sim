@@ -1,3 +1,11 @@
+/* 간판용 둥근 글꼴 (카페24 써라운드) */
+@font-face {
+	font-family: "Cafe24Ssurround";
+	src: url("https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_2105_2@1.0/Cafe24Ssurround.woff") format("woff");
+	font-weight: normal;
+	font-display: swap;
+}
+
 :root {
 	--orange: #ff6726;
 	--ink: #101114;
@@ -17,9 +25,7 @@ html, body {
 	overflow: hidden;
 	background: #0c0d10;
 	color: var(--text);
-	/* 동글동글한 주아체 */
-	font-family: "Jua", "Malgun Gothic", system-ui, sans-serif;
-	font-synthesis: none; /* 주아체는 굵기가 하나라 가짜 볼드를 끈다 */
+	font-family: 'Noto Sans KR', sans-serif;
 	-webkit-user-select: none;
 	user-select: none;
 }
@@ -34,8 +40,7 @@ html, body {
 
 #title h1 {
 	margin: 0;
-	font-family: "Black Han Sans", sans-serif;
-	font-weight: 400;
+	font-weight: 900;
 	font-size: 30px;
 	letter-spacing: 0.5px;
 }
@@ -70,6 +75,18 @@ html, body {
 .block { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .block:last-child { border-bottom: 0; }
 
+/* 설정 접기 / 초기화 */
+.panelHead { display: flex; gap: 6px; padding: 8px 0 4px; }
+button.ghost { padding: 6px 8px; font-size: 12px; border-radius: 8px; background: transparent; }
+button.ghost:hover { background: rgba(255, 255, 255, 0.1); }
+#resetButton { flex: none; padding: 6px 12px; }
+#panel.collapsed #settings { display: none; }
+#settings .block:last-child { border-bottom: 1px solid var(--line); }
+
+/* 가스가 떨어지면 게이지가 깜빡인다 */
+#panel.empty .bar { animation: empty 0.6s ease-in-out infinite alternate; }
+@keyframes empty { to { background: rgba(255, 70, 70, 0.55); } }
+
 h2, h3 { margin: 0; font-weight: 700; }
 h2 { font-size: 15px; }
 h3 { font-size: 13px; color: var(--muted); font-weight: 700; }
@@ -88,7 +105,7 @@ output { font-variant-numeric: tabular-nums; font-weight: 900; font-size: 16px; 
 .ringLift { fill: none; stroke: #ff1744; stroke-width: 1.5; stroke-dasharray: 4 3; opacity: 0.8; }
 
 .gradeBox { min-width: 0; }
-#gradeName { font-family: "Black Han Sans", sans-serif; font-size: 26px; line-height: 1.1; color: #ffca28; }
+#gradeName { font-weight: 900; font-size: 24px; line-height: 1.1; color: #ffca28; }
 #gradeTier { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
 input[type=range] { width: 100%; accent-color: var(--orange); margin: 6px 0 2px; }
@@ -149,46 +166,6 @@ label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 #flight b { font-variant-numeric: tabular-nums; font-size: 18px; }
 #flight[hidden] { display: none; }
 
-#toast {
-	position: fixed; left: 50%; top: 18px; transform: translateX(-50%);
-	display: flex; flex-direction: column; align-items: center; gap: 6px;
-	pointer-events: none;
-}
-
-#toast div {
-	background: rgba(16, 17, 20, 0.85);
-	border: 1px solid var(--line);
-	padding: 8px 14px;
-	border-radius: 999px;
-	font-weight: 700;
-	animation: toast 2.6s ease forwards;
-}
-
-@keyframes toast {
-	0% { opacity: 0; transform: translateY(-8px); }
-	10%, 80% { opacity: 1; transform: none; }
-	100% { opacity: 0; }
-}
-
-#words { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
-
-.word {
-	position: absolute;
-	font-family: "Black Han Sans", sans-serif;
-	white-space: nowrap;
-	-webkit-text-stroke: 2px #1a1206;
-	paint-order: stroke fill;
-	text-shadow: 0 4px 0 rgba(0, 0, 0, 0.35);
-	animation: word 1.3s cubic-bezier(.2, .9, .3, 1.2) forwards;
-}
-
-@keyframes word {
-	0% { opacity: 0; transform: translate(-50%, -50%) scale(0.3) rotate(var(--r)); }
-	15% { opacity: 1; transform: translate(-50%, -50%) scale(1.15) rotate(var(--r)); }
-	30% { transform: translate(-50%, -50%) scale(1) rotate(var(--r)); }
-	100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), calc(-50% - 90px)) scale(1.05) rotate(var(--r)); }
-}
-
 #loading {
 	position: fixed; inset: 0;
 	display: grid; place-items: center;
@@ -200,7 +177,7 @@ label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 #loading.done { opacity: 0; pointer-events: none; }
 
 .loadingCard { text-align: center; }
-.loadingCard h2 { font-family: "Black Han Sans", sans-serif; font-weight: 400; font-size: 28px; margin: 18px 0 6px; }
+.loadingCard h2 { font-weight: 900; font-size: 26px; margin: 18px 0 6px; }
 .loadingCard p { color: var(--muted); margin: 0; font-size: 14px; }
 
 .face {
@@ -217,7 +194,7 @@ label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 @keyframes bob { to { transform: translateY(-8px) rotate(4deg); } }
 
 /* 카메라 시점 */
-#cameraModes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-top: 8px; }
+#cameraModes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px; }
 #cameraModes button { padding: 7px 2px; font-size: 11.5px; border-radius: 8px; }
 #cameraModes button small { font-size: 9px; }
 #cameraModes button.on { background: var(--orange); border-color: var(--orange); color: #1b0d06; }
@@ -234,15 +211,6 @@ label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 }
 
 #carButton[hidden] { display: none; }
-
-/* 자동 연출: 영화처럼 위아래 검은 띠 */
-#shot {
-	position: fixed; left: 50%; bottom: 7.5vh; transform: translateX(-50%);
-	font-size: 14px; color: #fff; opacity: 0.85;
-	text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
-	pointer-events: none;
-	z-index: 2;
-}
 
 body::before, body::after {
 	content: ""; position: fixed; left: 0; right: 0; height: 0;
@@ -283,8 +251,10 @@ body.cinema::before, body.cinema::after { height: 6vh; }
 @media (max-width: 720px) {
 	#stick { bottom: calc(38% + 22px); }
 	#carButton { bottom: calc(38% + 40px); left: auto; right: 14px; transform: none; }
-	#shot { bottom: calc(38% + 16px); }
 	#panel { top: auto; bottom: 10px; right: 10px; left: 10px; width: auto; max-height: 38%; }
+	/* 설정을 접으면 패널이 낮아지니 조이스틱·탑승 버튼도 내려온다 */
+	body:has(#panel.collapsed) #stick { bottom: 170px; }
+	body:has(#panel.collapsed) #carButton { bottom: 186px; }
 	#help { display: none; }
 	#title h1 { font-size: 22px; }
 }

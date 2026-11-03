@@ -6,6 +6,7 @@ export const CAMERA_MODES = [
 	{ id: 'first', label: '1인칭' },
 	{ id: 'third', label: '3인칭' },
 	{ id: 'people', label: '사람들' },
+	{ id: 'drone', label: '드론 촬영' },
 	{ id: 'city', label: '도시 전체' },
 	{ id: 'auto', label: '자동 연출' }
 ];
@@ -37,18 +38,34 @@ export class Director {
 		this.tripod = new THREE.Vector3();
 		this.label = '';
 
-		// 1인칭에서는 드래그로 둘러본다
+		// 드론: 내가 직접 날며 찍는 카메라
+		this.drone = { pos: new THREE.Vector3(), yaw: 0, pitch: - 0.2, vel: new THREE.Vector3() };
+
+		// 1인칭·드론에서는 드래그로 둘러본다
 		let drag = null;
+		const looking = () => this.mode === 'first' || this.mode === 'drone';
 		dom.addEventListener( 'pointerdown', ( e ) => {
 
-			if ( this.mode === 'first' ) drag = { x: e.clientX, y: e.clientY };
+			if ( looking() ) drag = { x: e.clientX, y: e.clientY };
 
 		} );
 		window.addEventListener( 'pointermove', ( e ) => {
 
-			if ( ! drag || this.mode !== 'first' ) return;
-			this.fpYaw -= ( e.clientX - drag.x ) * 0.005;
-			this.fpPitch = THREE.MathUtils.clamp( this.fpPitch - ( e.clientY - drag.y ) * 0.004, - 1.2, 1.2 );
+			if ( ! drag || ! looking() ) return;
+			const dx = ( e.clientX - drag.x ), dy = ( e.clientY - drag.y );
+
+			if ( this.mode === 'drone' ) {
+
+				this.drone.yaw -= dx * 0.004;
+				this.drone.pitch = THREE.MathUtils.clamp( this.drone.pitch - dy * 0.0035, - 1.45, 1.45 );
+
+			} else {
+
+				this.fpYaw -= dx * 0.005;
+				this.fpPitch = THREE.MathUtils.clamp( this.fpPitch - dy * 0.004, - 1.2, 1.2 );
+
+			}
+
 			drag = { x: e.clientX, y: e.clientY };
 
 		} );
@@ -61,6 +78,18 @@ export class Director {
 	}
 
 	setMode( mode, ctx ) {
+
+		// 드론은 지금 카메라 자리에서 이륙한다
+		if ( mode === 'drone' && this.mode !== 'drone' ) {
+
+			const dir = new THREE.Vector3();
+			this.camera.getWorldDirection( dir );
+			this.drone.pos.copy( this.camera.position );
+			this.drone.yaw = Math.atan2( dir.x, dir.z );
+			this.drone.pitch = Math.asin( THREE.MathUtils.clamp( dir.y, - 1, 1 ) );
+			this.drone.vel.set( 0, 0, 0 );
+
+		}
 
 		this.mode = mode;
 		this.cut = true;
@@ -129,6 +158,28 @@ export class Director {
 			const c = Math.cos( this.fpPitch );
 			target = pos.clone().add( _v.set( Math.sin( this.fpYaw ) * c, Math.sin( this.fpPitch ), Math.cos( this.fpYaw ) * c ) );
 			fov = 72;
+			smooth = 0;
+
+		} else if ( this.mode === 'drone' ) {
+
+			// W/S 앞뒤, A/D 옆, E/Q 위아래, Shift 빠르게, 드래그로 고개
+			const d = this.drone, input = ctx.drone;
+			const c = Math.cos( d.pitch );
+			const look = new THREE.Vector3( Math.sin( d.yaw ) * c, Math.sin( d.pitch ), Math.cos( d.yaw ) * c );
+			const right = new THREE.Vector3( - Math.cos( d.yaw ), 0, Math.sin( d.yaw ) );
+			const speed = input.fast ? 40 : 12;
+			const want = look.clone().multiplyScalar( input.forward * speed ).addScaledVector( right, input.right * speed ).add( _v.set( 0, input.up * speed * 0.7, 0 ) );
+			d.vel.lerp( want, Math.min( 1, dt * 3 ) );
+			d.pos.addScaledVector( d.vel, dt );
+
+			// 건물과 땅을 뚫지 않게
+			const floor = this.world.heightAt( d.pos.x, d.pos.z ) + 0.6;
+			if ( d.pos.y < floor ) d.pos.y = floor;
+			d.pos.y = Math.min( d.pos.y, 1500 );
+
+			pos = d.pos.clone();
+			target = d.pos.clone().add( look );
+			fov = 60;
 			smooth = 0;
 
 		} else if ( this.mode === 'people' ) {
@@ -211,6 +262,23 @@ export class Director {
 
 	}
 
+	// 몸 전체가 들어오게 조금 떨어져서 비스듬히
+	bodyShot( p, dist ) {
+
+		const f = new THREE.Vector3( Math.sin( p.yaw ), 0, Math.cos( p.yaw ) );
+		const side = new THREE.Vector3( f.z, 0, - f.x );
+
+		if ( p.state === 'fly' || p.state === 'down' ) {
+
+			return { pos: p.pos.clone().add( _v.set( 5, 3.5, 5 ) ), target: p.pos.clone().add( _v.set( 0, 0.6, 0 ) ), fov: 50 };
+
+		}
+
+		const pos = p.pos.clone().addScaledVector( f, dist * 0.9 ).addScaledVector( side, dist * 0.45 ).add( _v.set( 0, 1.35, 0 ) );
+		return { pos, target: p.pos.clone().add( _v.set( 0, 0.92 * p.scale, 0 ) ), fov: 38 };
+
+	}
+
 	peopleShot( ctx, head ) {
 
 		this.subjectTime += ctx.dt;
@@ -227,7 +295,7 @@ export class Director {
 
 		}
 
-		const shot = this.faceShot( this.subject );
+		const shot = this.bodyShot( this.subject, 4.3 );
 		const p = this.subject;
 		const name = p.kind === 'cyclist' ? '자전거 타는 사람' : p.sex === 'female' ? '지나가던 여자' : '지나가던 남자';
 		return { ...shot, label: '사람들 · ' + name };
@@ -323,7 +391,7 @@ export class Director {
 			case 'reaction': {
 
 				if ( ! this.subject ) this.subject = ctx.people.interesting( me.position ) || ctx.people.list[ 0 ];
-				const shot = this.faceShot( this.subject, 1.9 );
+				const shot = this.bodyShot( this.subject, 3.2 );
 				return { ...shot, smooth: 5 };
 
 			}

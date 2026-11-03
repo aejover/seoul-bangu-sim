@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { pass, fog, pmremTexture, positionWorld, cameraPosition, uniform, vec3, select, abs, exp, max } from 'three/tsl';
+import { pass, fog, pmremTexture, positionWorld, cameraPosition, uniform, vec3, select, abs, exp, max, saturation } from 'three/tsl';
 
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
@@ -10,7 +10,7 @@ import { MeshletDrawingPipeline } from 'three/addons/pipelines/MeshletDrawingPip
 import { World } from './world.js';
 import { Character } from './character.js';
 import { Traffic } from './traffic.js';
-import { FartSystem, fartPhysics, LIFTOFF_DIAMETER } from './fart.js';
+import { FartSystem, fartPhysics, LIFTOFF_DIAMETER, LIFTOFF_FORCE } from './fart.js';
 import { Sound } from './audio.js';
 import { People } from './people.js';
 import { Destruction } from './destruction.js';
@@ -48,6 +48,9 @@ let controlYaw = Math.PI;
 let destroyedTotal = 0;
 let nearCar = null;
 const directorEvents = [];
+const droneInput = { forward: 0, right: 0, up: 0, fast: false };
+let firstFrameTime = 0;
+let loadingDone = false;
 
 const keys = {};
 const stick = { x: 0, y: 0 };
@@ -79,7 +82,8 @@ async function init() {
 	// 간판용 한글 폰트
 	const fonts = Promise.all( [
 		document.fonts.load( '80px "Black Han Sans"', '가나다치킨' ),
-		document.fonts.load( '20px "Jua"', '가나다' )
+		document.fonts.load( '700 20px "Noto Sans KR"', '가나다' ),
+		document.fonts.load( '80px "Cafe24Ssurround"', '가나다치킨편의점' )
 	] ).catch( () => {} );
 
 	renderer = new THREE.WebGPURenderer( { antialias: true } );
@@ -148,7 +152,8 @@ async function init() {
 	const colorNode = scenePass.getTextureNode();
 	const bloomPass = bloom( colorNode, 0.09, 0.25, 0.0 );
 	bloomPass.setResolutionScale( 0.25 );
-	renderPipeline.outputNode = colorNode.add( bloomPass );
+	// 채도 10% 올려 화면을 선명하게
+	renderPipeline.outputNode = saturation( colorNode.add( bloomPass ), 1.1 );
 
 	// ---- 나
 	setLoading( '내 몸에 관절 넣는 중...' );
@@ -491,7 +496,6 @@ function setupUI() {
 
 		sound.unlock();
 		fart.refill();
-		toast( '고구마 냠냠 🍠 가스 100% 충전!' );
 
 	} );
 
@@ -524,6 +528,45 @@ function setupUI() {
 
 	} );
 
+	$( 'resetButton' ).addEventListener( 'click', () => {
+
+		sound.unlock();
+		resetSimulation();
+
+	} );
+
+	// 설정 접기 / 펼치기 (폰에서는 처음에 접어 둔다)
+	const panel = $( 'panel' );
+	let collapsed = touch;
+	try {
+
+		const saved = localStorage.getItem( 'settingsCollapsed' );
+		if ( saved !== null ) collapsed = saved === '1';
+
+	} catch ( e ) { /* 저장소를 못 쓰면 기본값 */ }
+
+	const applyCollapse = () => {
+
+		panel.classList.toggle( 'collapsed', collapsed );
+		$( 'collapseButton' ).setAttribute( 'aria-expanded', String( ! collapsed ) );
+		$( 'collapseButton' ).textContent = collapsed ? '설정 펼치기 ▾' : '설정 접기 ▴';
+
+	};
+
+	$( 'collapseButton' ).addEventListener( 'click', () => {
+
+		collapsed = ! collapsed;
+		applyCollapse();
+		try {
+
+			localStorage.setItem( 'settingsCollapsed', collapsed ? '1' : '0' );
+
+		} catch ( e ) { /* 무시 */ }
+
+	} );
+
+	applyCollapse();
+
 }
 
 function setCameraMode( mode ) {
@@ -552,8 +595,6 @@ function setCameraMode( mode ) {
 	}
 
 	refreshCameraButtons();
-	const label = CAMERA_MODES.find( ( m ) => m.id === mode ).label;
-	toast( `🎥 ${ label } 시점` + ( mode === 'people' ? ' · 다시 누르면 다른 사람' : '' ) );
 
 }
 
@@ -576,7 +617,6 @@ function toggleCar() {
 		me.group.visible = true;
 		me.shadow.visible = true;
 		controls.minDistance = 1.8;
-		toast( '🚶 내렸다' );
 
 	} else if ( nearCar && me.state === 'ground' ) {
 
@@ -589,9 +629,44 @@ function toggleCar() {
 		followTarget.copy( car.pos ).setY( car.pos.y + 0.7 );
 		controls.target.copy( followTarget );
 		cameraFree.copy( car.pos ).addScaledVector( car.heading, - 8 ).setY( car.pos.y + 3 );
-		toast( '🏎️ 페라리 탑승! W 가속 · S 브레이크 · A/D 핸들 · Space 방구 부스터' );
 
 	}
+
+}
+
+// 나만 처음 자리로 (R)
+function returnHome() {
+
+	if ( traffic.player ) toggleCar();
+	me.position.copy( SPAWN );
+	me.velocity.set( 0, 0, 0 );
+	me.yaw = Math.PI;
+	me.setState( 'ground' );
+	controls.maxDistance = 80;
+	snapCamera();
+
+}
+
+// 시뮬레이션 전체 초기화: 빌딩·나무·간판 복구, 차와 사람 다시 배치, 설정값도 처음으로
+function resetSimulation() {
+
+	returnHome();
+	fart.reset();
+	fartHeld = false;
+	$( 'fartButton' ).classList.remove( 'on' );
+	destruction.reset();
+	signs.restore();
+	traffic.reset();
+	people.reset( SPAWN );
+	launchedTotal = 0;
+	destroyedTotal = 0;
+	maxAltitude = 0;
+
+	$( 'diameter' ).value = 28;
+	$( 'diameter' ).dispatchEvent( new Event( 'input' ) );
+	$( 'time' ).value = 17.4;
+	$( 'time' ).dispatchEvent( new Event( 'input' ) );
+	setCameraMode( 'third' );
 
 }
 
@@ -611,7 +686,7 @@ function setupInput() {
 
 		}
 
-		if ( e.code === 'KeyE' && ! e.repeat ) toggleCar();
+		if ( e.code === 'KeyE' && ! e.repeat && director.mode !== 'drone' ) toggleCar();
 		if ( e.code === 'KeyC' && ! e.repeat ) {
 
 			const i = CAMERA_MODES.findIndex( ( m ) => m.id === director.mode );
@@ -619,7 +694,7 @@ function setupInput() {
 
 		}
 
-		const digit = /^Digit([1-5])$/.exec( e.code );
+		const digit = /^Digit([1-6])$/.exec( e.code );
 		if ( digit && ! e.repeat ) setCameraMode( CAMERA_MODES[ digit[ 1 ] - 1 ].id );
 		if ( e.code === 'Tab' ) {
 
@@ -628,19 +703,9 @@ function setupInput() {
 
 		}
 
-		if ( e.code === 'KeyR' ) {
+		if ( e.code === 'KeyR' && ! e.repeat ) returnHome();
 
-			if ( traffic.player ) toggleCar();
-			me.position.copy( SPAWN );
-			me.velocity.set( 0, 0, 0 );
-			me.yaw = Math.PI;
-			me.setState( 'ground' );
-			controls.maxDistance = 80;
-			snapCamera();
-
-		}
-
-		if ( [ 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight' ].includes( e.code ) ) e.preventDefault();
+		if ( [ 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown' ].includes( e.code ) ) e.preventDefault();
 
 	} );
 
@@ -721,6 +786,17 @@ function gatherInput() {
 	const f = clamp( ( keys.KeyW || keys.ArrowUp ? 1 : 0 ) - ( keys.KeyS || keys.ArrowDown ? 1 : 0 ) - stick.y );
 	const r = clamp( ( keys.KeyD || keys.ArrowRight ? 1 : 0 ) - ( keys.KeyA || keys.ArrowLeft ? 1 : 0 ) + stick.x );
 
+	// 드론 시점: 이동 키는 드론이 쓰고 나는 제자리 (방구는 그대로 뀔 수 있다)
+	if ( director.mode === 'drone' ) {
+
+		droneInput.forward = f;
+		droneInput.right = r;
+		droneInput.up = ( keys.KeyE || keys.PageUp ? 1 : 0 ) - ( keys.KeyQ || keys.PageDown ? 1 : 0 );
+		droneInput.fast = keys.ShiftLeft || keys.ShiftRight || Math.hypot( stick.x, stick.y ) > 0.9;
+		return { move: new THREE.Vector3(), run: false, forward: 0, turn: 0 };
+
+	}
+
 	// 카메라 기준 이동 방향 (컷이 바뀌는 연출 시점에서는 마지막으로 직접 잡던 카메라 방향)
 	const forward = new THREE.Vector3();
 
@@ -741,42 +817,6 @@ function gatherInput() {
 
 	// 조이스틱을 끝까지 밀면 달리기
 	return { move, run: keys.ShiftLeft || keys.ShiftRight || Math.hypot( stick.x, stick.y ) > 0.9, forward: f, turn: r };
-
-}
-
-let lastToast = { text: '', time: 0 };
-
-function toast( text ) {
-
-	// 같은 알림이 연달아 쌓이지 않게
-	const now = performance.now();
-	if ( text === lastToast.text && now - lastToast.time < 2500 ) return;
-	lastToast = { text, time: now };
-
-	const el = document.createElement( 'div' );
-	el.textContent = text;
-	$( 'toast' ).appendChild( el );
-	setTimeout( () => el.remove(), 2700 );
-	while ( $( 'toast' ).children.length > 3 ) $( 'toast' ).firstChild.remove();
-
-}
-
-function popWord( text, position, force, color ) {
-
-	const v = position.clone().project( camera );
-	if ( v.z > 1 ) return;
-	const el = document.createElement( 'div' );
-	el.className = 'word';
-	el.textContent = text;
-	const size = 20 + 15 * Math.log10( 1 + force );
-	el.style.fontSize = `${ size }px`;
-	el.style.color = color;
-	el.style.left = `${ ( v.x * 0.5 + 0.5 ) * window.innerWidth + ( Math.random() - 0.5 ) * 80 }px`;
-	el.style.top = `${ ( - v.y * 0.5 + 0.5 ) * window.innerHeight + ( Math.random() - 0.5 ) * 40 }px`;
-	el.style.setProperty( '--r', `${ ( Math.random() - 0.5 ) * 24 }deg` );
-	el.style.setProperty( '--dx', `${ ( Math.random() - 0.5 ) * 120 }px` );
-	$( 'words' ).appendChild( el );
-	setTimeout( () => el.remove(), 1400 );
 
 }
 
@@ -827,14 +867,15 @@ function animate() {
 	const driving = traffic.player !== null && traffic.player !== undefined;
 	directorEvents.length = 0;
 
-	fart.update( dt, fartHeld, me, nightness.value );
+	fart.update( dt, fartHeld, me, nightness.value, camera );
 	if ( driving ) traffic.drive( dt, input, fart, me );
 	else me.update( dt, input, world, fart );
 	traffic.update( dt, me, fart );
 	people.update( dt, me, fart, camera );
 
-	// 아주 센 방구: 나무와 빌딩이 날아간다
-	if ( fart.active ) destruction.blast( dt, me.jetOrigin, fart.physics );
+	// 이륙선보다 센 방구만 나무와 빌딩을 날린다 (그 아래에서는 페라리만 날아간다)
+	const strong = fart.physics.force >= LIFTOFF_FORCE;
+	if ( fart.active && strong ) destruction.blast( dt, me.jetOrigin, fart.physics );
 	destruction.update( dt );
 
 	for ( const e of destruction.events ) {
@@ -842,8 +883,6 @@ function animate() {
 		if ( e.type === 'destroy' ) {
 
 			destroyedTotal += e.towers;
-			if ( e.towers ) toast( `🏢 빌딩 ${ e.towers }채 날아감!!` );
-			else if ( e.trees > 2 ) toast( `🌳 은행나무 ${ e.trees }그루 뽑힘!` );
 			directorEvents.push( 'destroy' );
 
 		}
@@ -853,7 +892,7 @@ function animate() {
 	destruction.events.length = 0;
 
 	// 페라리 근처면 탈 수 있다
-	nearCar = driving ? null : traffic.nearestCar( me.position );
+	nearCar = driving || director.mode === 'drone' ? null : traffic.nearestCar( me.position );
 	$( 'carButton' ).hidden = ! ( nearCar || driving );
 	$( 'carButton' ).textContent = driving ? '🚶 내리기 (E)' : '🏎️ 타기 (E)';
 
@@ -871,38 +910,25 @@ function animate() {
 	// 방구 이벤트
 	for ( const e of fart.events ) {
 
-		if ( e.type === 'word' ) popWord( e.text, me.jetOrigin, e.force, e.color );
-		else if ( e.type === 'shock' ) {
+		if ( e.type === 'shock' ) {
 
 			traffic.shock( me.position, e.force, e.radius );
 			people.shock( me.position, e.force, e.radius );
-			destruction.shock( me.position, e.force, e.radius );
+			if ( strong ) destruction.shock( me.position, e.force, e.radius );
 			directorEvents.push( 'shock' );
 
-		} else if ( e.type === 'empty' ) toast( '가스 부족! 고구마를 드세요 🍠' );
+		}
 
 	}
 
 	fart.events.length = 0;
-
-	for ( const e of people.events ) popWord( e.text, e.pos, 4, e.color );
-	people.events.length = 0;
 
 	for ( const e of traffic.events ) {
 
 		if ( e.type === 'launch' ) {
 
 			launchedTotal += e.count;
-			toast( `페라리 ${ e.count }대 날아감! 💨` );
 			directorEvents.push( 'launch' );
-
-		} else if ( e.type === 'crash' && e.speed > 12 ) {
-
-			popWord( '쾅!', traffic.player.pos.clone().setY( 1.5 ), 400, '#ffffff' );
-
-		} else if ( e.type === 'honk' && Math.random() < 0.5 ) {
-
-			popWord( '빵빵!', e.pos.clone().setY( 1.6 ), 20, '#ffffff' );
 
 		}
 
@@ -911,27 +937,11 @@ function animate() {
 	traffic.events.length = 0;
 	$( 'counter' ).textContent = `페라리 ${ launchedTotal }대 · 빌딩 ${ destroyedTotal }채`;
 
-	// 상태 변화 알림
+	// 상태 변화
 	if ( me.state !== lastState ) {
 
-		if ( me.state === 'air' && fart.active ) {
-
-			toast( '🚀 방구 로켓 이륙!' );
-			directorEvents.push( 'liftoff' );
-
-		}
-		if ( lastState === 'air' ) {
-
-			sound.thud( Math.min( 1, ( me.lastImpact || 0 ) / 10 ) );
-			if ( me.state === 'down' ) {
-
-				toast( '쿵! 엉덩방아 🤕' );
-				popWord( '쿵!', me.position.clone().setY( me.position.y + 0.5 ), 300, '#ffffff' );
-
-			}
-
-		}
-
+		if ( me.state === 'air' && fart.active ) directorEvents.push( 'liftoff' );
+		if ( lastState === 'air' ) sound.thud( Math.min( 1, ( me.lastImpact || 0 ) / 10 ) );
 		lastState = me.state;
 
 	}
@@ -951,13 +961,14 @@ function animate() {
 
 	$( 'tankBar' ).style.width = `${ fart.tank * 100 }%`;
 	$( 'tankText' ).textContent = `${ Math.round( fart.tank * 100 ) }%`;
+	$( 'panel' ).classList.toggle( 'empty', fart.tank < 0.02 );
 
 	// 카메라: 나를 따라가고, 벽에 막히면 당겨지고, 방구 세기만큼 흔들린다
 	const target = me.position.clone().add( new THREE.Vector3( 0, me.state === 'down' ? 0.4 : ( driving ? 1.2 : 1.3 ), 0 ) );
 	const delta = target.clone().sub( followTarget ).multiplyScalar( Math.min( 1, dt * ( flying || driving ? 6 : 10 ) ) );
 	followTarget.add( delta );
 
-	const directed = director.mode !== 'third' && director.update( { dt, me, people, traffic, fart, driving, events: directorEvents } );
+	const directed = director.mode !== 'third' && director.update( { dt, me, people, traffic, fart, driving, events: directorEvents, drone: droneInput } );
 
 	if ( directed ) {
 
@@ -977,10 +988,9 @@ function animate() {
 
 	}
 
-	$( 'shot' ).textContent = director.label;
 	document.body.classList.toggle( 'cinema', director.mode === 'auto' );
 
-	const s = fart.shake;
+	const s = director.mode === 'drone' ? 0 : fart.shake;
 	camera.position.add( new THREE.Vector3( ( Math.random() - 0.5 ) * s, ( Math.random() - 0.5 ) * s, ( Math.random() - 0.5 ) * s ) );
 
 	// 확인용 고정 카메라
@@ -993,12 +1003,13 @@ function animate() {
 
 	renderPipeline.render();
 
-	// 첫 몇 프레임이 그려지면 로딩 화면을 걷는다
+	// 셰이더가 다 만들어질 때까지 (처음 2초 남짓은 화면이 검게 나올 수 있다) 로딩 화면을 덮어 둔다
 	window.__frames = frameCount + 1;
-	if ( ++ frameCount === 3 ) {
+	if ( ++ frameCount === 1 ) firstFrameTime = performance.now();
+	if ( ! loadingDone && frameCount > 3 && performance.now() - firstFrameTime > 2500 ) {
 
+		loadingDone = true;
 		$( 'loading' ).classList.add( 'done' );
-		toast( touch ? '서울 도착! 방구 버튼을 꾹 눌러 보세요' : '서울 도착! Space 를 꾹 눌러 방구를 뀌어 보세요' );
 
 	}
 

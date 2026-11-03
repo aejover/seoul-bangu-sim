@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { ASSETS, J, toModel, Rig, loadBody, walkPose, advancePhase, limb, lerpV, blobShadowTexture } from './rig.js';
+import { walkPose, limb, lerpV, blobShadowTexture } from './rig.js';
+import { loadSoldier, SoldierBody, dressedGeometry } from './soldier.js';
 
 export { ASSETS, limb } from './rig.js';
 
@@ -82,21 +83,19 @@ export class Character {
 
 	async load() {
 
-		const [ geometry, texture ] = await Promise.all( [
-			loadBody(),
-			new THREE.TextureLoader().loadAsync( ASSETS + 'textures/uv_grid_opengl.jpg' )
-		] );
-		texture.colorSpace = THREE.SRGBColorSpace;
-		texture.anisotropy = 8;
-
-		const material = new THREE.MeshStandardMaterial( { map: texture, roughness: 0.75, metalness: 0.0, side: THREE.DoubleSide } );
-		const rig = new Rig( geometry, material );
-		this.rig = rig;
-		this.bones = rig.bones;
-		this.bind = rig.bind;
-		this.mesh = rig.mesh;
+		// 몸은 Soldier, 옷은 검정 가죽 재킷 + 흰 티 + 와이드 흑청 + 흰 운동화
+		const kit = await loadSoldier();
+		this.kit = kit;
+		this.solver = kit.solver;
+		const outfit = { open: true, jacket: 0x161616, inner: 0xf2f2ee, pants: 0x2f333b, wide: 0.42, shoes: 0xf2f2ee, belt: 0x111111 };
+		const material = new THREE.MeshStandardMaterial( { vertexColors: true, roughness: 0.72, side: THREE.DoubleSide } );
+		this.body = new SoldierBody( kit, dressedGeometry( kit, outfit, 'male', 0xe9c3a4 ), material );
+		this.mesh = this.body.mesh;
 		this.mesh.name = 'MeBody';
-		this.group.add( this.mesh );
+		this.group.add( this.body.root );
+		const J = kit.joints;
+		const headMount = this.body.attach( 'Head', J.head );
+		this.hipsMount = this.body.attach( 'Hips', J.hips );
 
 		// 네모 얼굴 머리
 		this.face = createFace();
@@ -106,14 +105,14 @@ export class Character {
 		this.headMaterials = [ orange, front ];
 		const size = 0.3;
 		const head = new THREE.Mesh( new THREE.BoxGeometry( size, size, size ), [ orange, orange, orange, orange, front, orange ] );
-		head.position.set( 0, size / 2 - 0.035, 0.012 );
+		head.position.set( 0, size / 2 - 0.02, 0.0 );
 		head.name = 'FaceHead';
-		this.bones.head.add( head );
+		headMount.add( head );
 		this.head = head;
 
 		// 엉덩이 분사구
-		this.nozzle.position.copy( toModel( J.anus ) ).sub( this.bind.hips.head );
-		this.bones.hips.add( this.nozzle );
+		this.nozzle.position.copy( J.anus ).sub( J.hips );
+		this.hipsMount.add( this.nozzle );
 
 		// 발밑 그림자
 		this.shadow = new THREE.Mesh(
@@ -130,7 +129,7 @@ export class Character {
 
 	solve( pose ) {
 
-		return this.rig.solve( pose );
+		return this.solver.solve( pose );
 
 	}
 
@@ -139,7 +138,8 @@ export class Character {
 	buildPose( dt, f ) {
 
 		const t = this.time;
-		const P = walkPose( t, this.speed, this.phase );
+		// 서 있는 기본 자세 (걷는 동작은 애니메이션이 맡는다)
+		const P = walkPose( t, 0, 0 );
 		const move = THREE.MathUtils.clamp( this.speed / 1.4, 0, 1 );
 
 		// ---- 방구 자세: 엉덩이 쭉, 한쪽 다리 들기, 팔 벌려 균형
@@ -234,7 +234,7 @@ export class Character {
 
 		if ( down > 0.001 ) {
 
-			P.hipsOffset.y = THREE.MathUtils.lerp( P.hipsOffset.y, - 0.82, down );
+			P.hipsOffset.y = THREE.MathUtils.lerp( P.hipsOffset.y, 0.14 - this.solver.hipsRest.y, down );
 			P.hipsOffset.z = THREE.MathUtils.lerp( P.hipsOffset.z, 0.0, down );
 			P.hips.x = THREE.MathUtils.lerp( P.hips.x, - Math.PI / 2 + 0.05, down );
 			P.hips.z = THREE.MathUtils.lerp( P.hips.z, 0, down );
@@ -307,7 +307,8 @@ export class Character {
 				const excess = horiz.length() - friction;
 				if ( excess > 0 ) hv.addScaledVector( horiz.normalize(), excess / mass * dt );
 
-				if ( up > mass * g ) {
+				// 이륙 판정은 화면의 이륙선(83 mm)과 같은 기준: 추력의 80 % 가 몸무게를 넘을 때
+				if ( F * 0.8 > mass * g ) {
 
 					this.setState( 'air' );
 					this.velocity.y = 1.5;
@@ -382,8 +383,6 @@ export class Character {
 		}
 
 		// ---- 애니메이션 상태 블렌딩
-		this.phase = advancePhase( this.phase, this.speed, dt );
-
 		const k = Math.min( 1, dt * 7 );
 		this.fartBlend = THREE.MathUtils.lerp( this.fartBlend, farting && this.state === 'ground' ? 1 : 0, Math.min( 1, dt * 10 ) );
 		this.flyBlend = THREE.MathUtils.lerp( this.flyBlend, this.state === 'air' ? 1 : 0, k );
@@ -393,16 +392,31 @@ export class Character {
 		if ( this.relief > 1 || farting ) this.relief = 0;
 		this.wasFarting = farting;
 
-		const pose = this.buildPose( dt, fart );
 		this.group.rotation.y = this.yaw;
-		const r = this.solve( pose );
 
-		// 땅에 발 붙이기 (지상에서만)
-		const grounded = this.state === 'ground' ? 1 - this.flyBlend : 0;
-		const lowest = Math.min( r.footL, r.footR );
-		this.groundOffset = THREE.MathUtils.lerp( this.groundOffset, - lowest * grounded, Math.min( 1, dt * 18 ) );
-		if ( this.state !== 'ground' ) this.groundOffset *= Math.max( 0, 1 - dt * 6 );
-		this.bones.hips.position.y += this.groundOffset;
+		// 걷기·달리기는 Soldier 애니메이션, 방구·비행·쓰러짐 자세는 포즈 풀이를 그 위에 섞는다
+		this.body.locomote( dt, this.speed );
+		const relief = this.relief > 0 ? Math.sin( Math.min( 1, this.relief ) * Math.PI ) : 0;
+		const procedural = Math.min( 1, Math.max( this.fartBlend, this.flyBlend, this.downBlend, this.state === 'getup' ? 1 - this.stateTime / 0.9 : 0, relief * 0.8 ) );
+
+		if ( procedural > 0.002 ) {
+
+			const pose = this.buildPose( dt, fart );
+			const r = this.solve( pose );
+
+			// 땅에 발 붙이기 (지상에서만)
+			const grounded = this.state === 'ground' ? 1 - this.flyBlend : 0;
+			const lowest = Math.min( r.footL, r.footR );
+			this.groundOffset = THREE.MathUtils.lerp( this.groundOffset, - lowest * grounded, Math.min( 1, dt * 18 ) );
+			if ( this.state !== 'ground' ) this.groundOffset *= Math.max( 0, 1 - dt * 6 );
+			const w = procedural;
+			this.body.apply( r, { hips: w, spine: w, head: w, armL: w, armR: w, legs: w }, this.groundOffset );
+
+		} else {
+
+			this.groundOffset = 0;
+
+		}
 
 		// 표정
 		this.blinkTimer -= dt;
@@ -416,7 +430,7 @@ export class Character {
 		// 분사구 위치와 방향 (월드)
 		this.group.updateMatrixWorld( true );
 		this.nozzle.getWorldPosition( this.jetOrigin );
-		const hipsWorld = this.bones.hips.getWorldQuaternion( new THREE.Quaternion() );
+		const hipsWorld = this.hipsMount.getWorldQuaternion( new THREE.Quaternion() );
 		this.jetDirection.set( 0, - 0.946, - 0.324 ).applyQuaternion( hipsWorld ).normalize();
 
 		// 그림자

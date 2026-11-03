@@ -5,6 +5,7 @@ import * as THREE from 'three/webgpu';
 
 const TREE_THRESHOLD = 150; // 나무가 뽑히는 세기 (N)
 const TOWER_THRESHOLD = 480; // 빌딩이 날아가는 세기 (N)
+const MAX_FLYING = 12; // 한꺼번에 날아다니는 빌딩 수 상한 (성능)
 
 export class Destruction {
 
@@ -20,7 +21,7 @@ export class Destruction {
 		this.flying = [];
 		this.flyingTrees = [];
 		this.events = [];
-		this.shadowTimer = 0;
+		this.shadowRefresh = - 1;
 		this.pulse = 0;
 
 		this.index();
@@ -52,7 +53,9 @@ export class Destruction {
 
 					}
 
-					this.towers.push( { lod: o, mesh: o.levels[ 0 ].object, box, center: p.clone(), gone: false } );
+					// 날아갈 때는 멀리 있는 빌딩용 싼 재질을 쓴다
+					const far = o.levels[ 1 ] ? o.levels[ 1 ].object.material : o.levels[ 0 ].object.material;
+					this.towers.push( { lod: o, mesh: o.levels[ 0 ].object, material: far, box, center: p.clone(), gone: false } );
 
 				} else if ( o.name === 'StreetTrees' && o.isInstancedMesh ) {
 
@@ -61,10 +64,11 @@ export class Destruction {
 					for ( let i = 0; i < o.count; i ++ ) {
 
 						o.getMatrixAt( i, m );
+						const local = m.clone();
 						m.premultiply( o.matrixWorld );
 						p.setFromMatrixPosition( m );
 						if ( m.elements[ 0 ] === 0 && m.elements[ 5 ] === 0 ) continue;
-						this.trees.push( { mesh: o, index: i, pos: p.clone(), matrix: m.clone(), gone: false } );
+						this.trees.push( { mesh: o, index: i, pos: p.clone(), matrix: m.clone(), local, gone: false } );
 
 					}
 
@@ -77,8 +81,11 @@ export class Destruction {
 		// 날아가는 나무는 인스턴스 하나에 모아서 그린다
 		if ( treeSource ) {
 
+			// 처음부터 보이지 않는 인스턴스 하나를 그려 둔다: 로딩 때 셰이더가 미리 만들어져서
+			// 첫 나무가 뽑히는 순간 GPU 가 수 초씩 멈추지 않는다 (예전에는 이때 탭이 튕겼다)
 			this.treeDebris = new THREE.InstancedMesh( treeSource.geometry, treeSource.material, 240 );
-			this.treeDebris.count = 0;
+			this.treeDebris.setMatrixAt( 0, new THREE.Matrix4().makeScale( 0, 0, 0 ) );
+			this.treeDebris.count = 1;
 			this.treeDebris.frustumCulled = false;
 			this.treeDebris.castShadow = true;
 			this.scene.add( this.treeDebris );
@@ -154,7 +161,7 @@ export class Destruction {
 				const d = Math.hypot( ex, ez );
 				if ( d > radius ) continue;
 				const strength = force * ( 1 - d / radius );
-				if ( strength > TOWER_THRESHOLD ) {
+				if ( strength > TOWER_THRESHOLD && this.flying.length < MAX_FLYING ) {
 
 					this.throwTower( t, center, strength );
 					towers ++;
@@ -168,6 +175,7 @@ export class Destruction {
 		if ( trees || towers ) {
 
 			this.tilesGroup.needsUpdate = true;
+			this.shadowRefresh = 0.15; // 사라진 빌딩·나무의 그림자를 한 번 지운다
 			this.events.push( { type: 'destroy', trees, towers } );
 			if ( towers ) this.sound.boom( Math.min( 1, towers / 3 + 0.4 ) );
 
@@ -208,9 +216,9 @@ export class Destruction {
 		if ( ! geometry.boundingBox ) geometry.computeBoundingBox();
 		const bb = geometry.boundingBox;
 		const half = ( bb.max.y - bb.min.y ) / 2;
-		const inner = new THREE.Mesh( geometry, t.mesh.material );
+		// 날아가는 동안은 그림자를 그리지 않는다 (큰 그림자 지도를 매번 다시 그리지 않게)
+		const inner = new THREE.Mesh( geometry, t.material );
 		inner.position.y = - ( bb.min.y + half );
-		inner.castShadow = true;
 		inner.receiveShadow = true;
 		const mesh = new THREE.Group();
 		t.lod.updateMatrixWorld( true );
@@ -341,23 +349,64 @@ export class Destruction {
 
 		this.flyingTrees = this.flyingTrees.filter( ( t ) => t.scale.x > 0.02 );
 
-		if ( this.treeDebris ) {
+		if ( this.treeDebris && ( this.flyingTrees.length || this.treeDebris.count > 1 ) ) {
 
-			this.treeDebris.count = this.flyingTrees.length;
+			this.treeDebris.count = Math.max( 1, this.flyingTrees.length );
+			if ( this.flyingTrees.length === 0 ) this.treeDebris.setMatrixAt( 0, m.makeScale( 0, 0, 0 ) );
 			this.flyingTrees.forEach( ( t, i ) => this.treeDebris.setMatrixAt( i, m.compose( t.pos, t.quat, t.scale ) ) );
 			this.treeDebris.instanceMatrix.needsUpdate = true;
 
 		}
 
-		// 그림자는 무언가 날아다닐 때만 가끔 다시 그린다
-		this.shadowTimer -= dt;
+		// 그림자는 빌딩·나무가 사라진 직후 한 번만 다시 그린다
+		if ( this.shadowRefresh >= 0 ) {
 
-		if ( ( this.flying.length || this.flyingTrees.some( ( t ) => ! t.landed ) ) && this.shadowTimer < 0 ) {
-
-			this.shadowTimer = 0.25;
-			this.sunLight.shadow.needsUpdate = true;
+			this.shadowRefresh -= dt;
+			if ( this.shadowRefresh < 0 ) this.sunLight.shadow.needsUpdate = true;
 
 		}
+
+	}
+
+	// 초기화: 날아간 빌딩과 나무를 모두 제자리로
+	reset() {
+
+		for ( const f of this.flying ) f.mesh.removeFromParent();
+		this.flying = [];
+		this.flyingTrees = [];
+
+		if ( this.treeDebris ) {
+
+			this.treeDebris.setMatrixAt( 0, new THREE.Matrix4().makeScale( 0, 0, 0 ) );
+			this.treeDebris.count = 1;
+			this.treeDebris.instanceMatrix.needsUpdate = true;
+
+		}
+
+		for ( const t of this.towers ) {
+
+			if ( ! t.gone ) continue;
+			t.gone = false;
+			if ( t.box ) t.box.gone = false;
+			t.lod.visible = true;
+
+		}
+
+		const dirty = new Set();
+
+		for ( const t of this.trees ) {
+
+			if ( ! t.gone ) continue;
+			t.gone = false;
+			t.mesh.setMatrixAt( t.index, t.local );
+			dirty.add( t.mesh );
+
+		}
+
+		for ( const mesh of dirty ) mesh.instanceMatrix.needsUpdate = true;
+		this.tilesGroup.needsUpdate = true;
+		this.sunLight.shadow.needsUpdate = true;
+		this.events.length = 0;
 
 	}
 

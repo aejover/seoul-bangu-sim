@@ -195,7 +195,8 @@ const STYLES = [
 	{ bg: '#0a2a6b', fg: '#ffe14d' }
 ];
 
-const FONT = '"Black Han Sans", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif';
+// 간판 글씨: 실제 가게 간판에 많이 쓰는 둥근 고딕 (카페24 써라운드)
+const FONT = '"Cafe24Ssurround", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif';
 
 function drawSignAtlas() {
 
@@ -503,10 +504,30 @@ export function buildSigns( world, spawn, radius = 340 ) {
 		}
 
 		ranges.delete( tower );
+		removed.push( [ tower, r ] );
 
 	};
 
-	return { group, glow, remove };
+	// 초기화: 지웠던 간판을 원래 위치로
+	const originals = meshes.map( ( m ) => m && m.geometry.attributes.position.array.slice() );
+	const removed = [];
+
+	const restore = () => {
+
+		meshes.forEach( ( m, k ) => {
+
+			if ( ! m ) return;
+			m.geometry.attributes.position.array.set( originals[ k ] );
+			m.geometry.attributes.position.needsUpdate = true;
+
+		} );
+
+		for ( const [ tower, r ] of removed ) ranges.set( tower, r );
+		removed.length = 0;
+
+	};
+
+	return { group, glow, remove, restore };
 
 }
 
@@ -534,7 +555,7 @@ function roadSignTexture( name, english, left, right ) {
 	ctx.textBaseline = 'middle';
 	ctx.font = `64px ${ FONT }`;
 	ctx.fillText( name, 256, 52 );
-	ctx.font = '24px "Jua", Arial, sans-serif';
+	ctx.font = '700 24px "Noto Sans KR", Arial, sans-serif';
 	ctx.fillText( english, 256, 100 );
 	ctx.font = 'bold 30px Arial, sans-serif';
 	ctx.textAlign = 'left';

@@ -13,7 +13,7 @@
 	<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-	<link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Jua&display=swap" rel="stylesheet">
+	<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
 	<link rel="stylesheet" href="style.css">
 	<script type="importmap">
 	{
@@ -29,46 +29,63 @@
 <body>
 	<div id="app"></div>
 
-	<div id="words"></div>
-
 	<header id="title">
 		<h1>서울 방구 시뮬레이터</h1>
 		<p>항문 크기가 방구 세기를 결정합니다 · F = 2 · P · A</p>
 	</header>
 
-	<div id="toast"></div>
-
 	<aside id="panel">
-		<section class="block">
-			<div class="row between">
-				<h2>항문 지름</h2>
-				<output id="diameterValue">28 mm</output>
-			</div>
-			<div class="ringRow">
-				<svg id="ring" viewBox="0 0 120 120" aria-hidden="true">
-					<circle cx="60" cy="60" r="56" class="ringBg"/>
-					<circle id="ringHole" cx="60" cy="60" r="14"/>
-					<circle id="ringLift" cx="60" cy="60" r="44" class="ringLift"/>
-				</svg>
-				<div class="gradeBox">
-					<div id="gradeName">뿌웅!!</div>
-					<div id="gradeTier">국밥 세 그릇</div>
+		<div class="panelHead">
+			<button id="collapseButton" class="ghost" aria-controls="settings" aria-expanded="true">설정 접기 ▴</button>
+			<button id="resetButton" class="ghost">↺ 초기화</button>
+		</div>
+
+		<div id="settings">
+			<section class="block">
+				<div class="row between">
+					<h2>항문 지름</h2>
+					<output id="diameterValue">28 mm</output>
 				</div>
-			</div>
-			<input id="diameter" type="range" min="2" max="110" step="1" value="28" aria-label="항문 지름 (mm)">
-			<div class="scale"><span>2 바늘구멍</span><span>보통</span><span>83 이륙선</span><span>110</span></div>
-		</section>
+				<div class="ringRow">
+					<svg id="ring" viewBox="0 0 120 120" aria-hidden="true">
+						<circle cx="60" cy="60" r="56" class="ringBg"/>
+						<circle id="ringHole" cx="60" cy="60" r="14"/>
+						<circle id="ringLift" cx="60" cy="60" r="44" class="ringLift"/>
+					</svg>
+					<div class="gradeBox">
+						<div id="gradeName">뿌웅!!</div>
+						<div id="gradeTier">국밥 세 그릇</div>
+					</div>
+				</div>
+				<input id="diameter" type="range" min="2" max="110" step="1" value="28" aria-label="항문 지름 (mm)">
+				<div class="scale"><span>2 바늘구멍</span><span>보통</span><span>83 이륙선</span><span>110</span></div>
+			</section>
 
-		<section class="block stats">
-			<div><span>개구 면적</span><b id="statArea">-</b></div>
-			<div><span>장내 압력</span><b>80 kPa</b></div>
-			<div><span>분출 추력</span><b id="statForce">-</b></div>
-			<div><span>소리 크기</span><b id="statDb">-</b></div>
-			<div><span>음높이</span><b id="statHz">-</b></div>
-			<div><span>가스 반경</span><b id="statReach">-</b></div>
-		</section>
+			<section class="block stats">
+				<div><span>개구 면적</span><b id="statArea">-</b></div>
+				<div><span>장내 압력</span><b>80 kPa</b></div>
+				<div><span>분출 추력</span><b id="statForce">-</b></div>
+				<div><span>소리 크기</span><b id="statDb">-</b></div>
+				<div><span>음높이</span><b id="statHz">-</b></div>
+				<div><span>가스 반경</span><b id="statReach">-</b></div>
+			</section>
 
-		<section class="block">
+			<section class="block">
+				<div class="row between"><h3>카메라 시점</h3><span class="small">C 다음 · 1~6</span></div>
+				<div id="cameraModes"></div>
+			</section>
+
+			<section class="block">
+				<div class="row between"><h3>시간</h3><output id="timeValue">17:24</output></div>
+				<input id="time" type="range" min="6" max="19.5" step="0.05" value="17.4" aria-label="시간">
+				<div class="row between small">
+					<label><input id="mute" type="checkbox"> 소리 끄기</label>
+					<span id="counter">페라리 0대 · 빌딩 0채</span>
+				</div>
+			</section>
+		</div>
+
+		<section class="block actions">
 			<div class="row between"><h3>장 속 가스</h3><span id="tankText">100%</span></div>
 			<div class="bar"><i id="tankBar"></i></div>
 			<div class="row gap">
@@ -76,30 +93,15 @@
 				<button id="eatButton">고구마 먹기 🍠</button>
 			</div>
 		</section>
-
-		<section class="block">
-			<div class="row between"><h3>카메라 시점</h3><span class="small">C 다음</span></div>
-			<div id="cameraModes"></div>
-		</section>
-
-		<section class="block">
-			<div class="row between"><h3>시간</h3><output id="timeValue">17:24</output></div>
-			<input id="time" type="range" min="6" max="19.5" step="0.05" value="17.4" aria-label="시간">
-			<div class="row between small">
-				<label><input id="mute" type="checkbox"> 소리 끄기</label>
-				<span id="counter">페라리 0대 · 빌딩 0채</span>
-			</div>
-		</section>
 	</aside>
 
 	<footer id="help">
-		<b>WASD</b> 걷기 · <b>Shift</b> 달리기 · <b>Space</b> 꾹 = 방구 · <b>E</b> 페라리 타기<br>
-		공중에서 <b>W/S</b> 기울기 · <b>A/D</b> 방향 · <b>R</b> 제자리 · <b>1~5</b> 시점 · 드래그 = 카메라
+		<b>WASD</b> 걷기 · <b>Shift</b> 달리기 · <b>Space</b> 꾹 = 방구 · <b>E</b> 페라리 타기 · <b>R</b> 제자리<br>
+		공중에서 <b>W/S</b> 기울기 · <b>A/D</b> 방향 · 드론: <b>WASD</b> 이동 <b>E/Q</b> 위아래 · 드래그 = 카메라
 	</footer>
 
 	<div id="stick" aria-hidden="true"><i id="stickKnob"></i></div>
 	<button id="carButton" hidden>🏎️ 타기 (E)</button>
-	<div id="shot"></div>
 
 	<div id="flight" hidden>
 		<span>고도 <b id="altitude">0</b> m</span>

@@ -567,6 +567,24 @@ export class Traffic {
 
 	}
 
+	// 초기화: 모든 차를 처음처럼 도로에 다시 놓는다
+	reset() {
+
+		this.player = null;
+		this.time = 0;
+		for ( const car of this.cars ) car.pos.set( 1e5, 0, 1e5 );
+		for ( const car of this.cars ) {
+
+			car.root.quaternion.identity();
+			car.wobble = 0;
+			car.stuck = 0;
+			car.ghost = 0;
+			this.spawn( car, null );
+
+		}
+
+	}
+
 	// ------------------------------------------------------------------
 	// 내가 페라리를 탄다
 
@@ -768,7 +786,6 @@ export class Traffic {
 				if ( up.y < 0 ) q2.multiply( new THREE.Quaternion().setFromAxisAngle( new THREE.Vector3( 0, 0, 1 ), Math.PI ) );
 				car.root.quaternion.copy( q2 );
 				car.pos.y = floor + ( up.y < 0 ? 0.25 : 0 );
-				this.sound.alarm( car.pos.distanceTo( me.position ) );
 
 			}
 

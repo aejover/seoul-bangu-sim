@@ -5,11 +5,13 @@
 
 **바로 하기: https://aejover.github.io/seoul-bangu-sim/**
 
-- 인도를 걷는 사람들과 자전거(따릉이) 타는 사람들: 관절이 있어서 걷고, 페달을 밟고, 방구에 반응합니다 (웃기, 코 막기, 도망, 비명, 날아가기, 일어나서 화내기)
-- 사람 얼굴은 webgl_decals 예제의 Lee Perry-Smith 스캔. 감은 눈 위에 뜬 눈을 데칼로 붙였고, 입술을 갈라 턱을 벌릴 수 있게 한 뒤 표정 모프(웃음·놀람·역겨움·슬픔·찡그림)를 넣었습니다. 여자는 턱·코·입술 모양과 화장, 긴 머리
+- 나와 행인의 몸은 webgl_animation_skinning_blending 예제의 Soldier (Idle/Walk/Run 애니메이션을 섞어 걷고 뜀). 군복 대신 서울 거리 옷차림: 가죽 재킷+와이드 데님, 스웨이드 재킷+터틀넥, 후드집업+반바지+모자, 양복, 블레이저+플리츠 스커트, 후드+비니+선글라스 등
+- 행인과 자전거(따릉이) 타는 사람들은 방구에 목소리로 반응합니다 (웃음, 으엑, 헉, 우와, 비명). 말풍선·자막은 없습니다
+- 사람 얼굴은 webgl_decals 예제의 Lee Perry-Smith 스캔. 감은 눈 위에 뜬 눈을 데칼로 붙였고, 입술을 갈라 턱을 벌릴 수 있게 한 뒤 표정 모프(웃음·놀람·역겨움·슬픔·찡그림)를 넣었습니다. 남자는 면도한 피부와 쉼표머리·투블럭, 여자는 턱·코·입술 모양과 화장, 시스루뱅·단발·포니테일
 - 페라리 타기 (E), 방구 부스터
-- 아주 센 방구는 은행나무와 빌딩까지 날려 버립니다
-- 카메라 시점 5가지: 1인칭, 3인칭, 사람들, 도시 전체, 자동 연출
+- 이륙선(83 mm) 아래 방구는 페라리만 날리고, 이륙선을 넘으면 사람·은행나무·빌딩까지 날아갑니다
+- 카메라 시점 6가지: 1인칭, 3인칭, 사람들(몸 전체), 드론 촬영(직접 날며 찍기), 도시 전체, 자동 연출
+- 초기화 버튼, 설정 접기/펼치기
 
 ## 물리
 
@@ -29,7 +31,8 @@
 | Space 꾹 = 방구 | 방구 뀌기 버튼 |
 | 공중에서 W/S 기울기, A/D 방향 | 조이스틱 |
 | E 페라리 타기 / 내리기 (운전: W 가속, S 브레이크, A/D 핸들) | 🏎️ 타기 버튼 |
-| 1~5 / C 카메라 시점, Tab 다른 사람 | 패널의 카메라 시점 버튼 |
+| 1~6 / C 카메라 시점, Tab 다른 사람 | 패널의 카메라 시점 버튼 |
+| 드론: WASD 이동, E/Q 위아래, Shift 빠르게, 드래그로 둘러보기 | 조이스틱 + 드래그 |
 | R 제자리로 | |
 | 마우스 드래그 = 카메라 | 한 손가락 드래그 = 카메라 |
 
@@ -54,7 +57,8 @@ node server.js 5173
 ## 구성
 
 - `src/main.js` — 렌더러, 도시, UI, 입력
-- `src/rig.js` — male02 모델 자동 리깅 (19개 관절, 측지선 스키닝), 포즈 풀이, IK
+- `src/rig.js` — 19관절 포즈 풀이와 IK (어떤 뼈대든 관절 위치만 있으면 쓸 수 있다)
+- `src/soldier.js` — Soldier 몸: 옷 입히기, Mixamo 뼈에 포즈 옮기기, 걷기·달리기 애니메이션 섞기
 - `src/character.js` — 나 (네모 얼굴), 포즈, 비행 물리
 - `src/face.js` — 행인 얼굴: 스캔 가공, 뜬 눈 데칼, 표정 모프, 머리카락, 화장
 - `src/people.js` — 행인과 자전거, 길 찾기, 방구 반응, 날아가기
@@ -68,8 +72,8 @@ node server.js 5173
 ## 크레딧
 
 - [three.js](https://threejs.org) (MIT) — 렌더러, `CityGenerator`, `MeshletDrawingPipeline`, 예제 코드
-- 모델: three.js 예제의 `male02` (webgl_loader_obj), `ferrari.glb` (webgl_materials_car), `LeePerrySmith.glb` (webgl_decals)
-- 폰트: Black Han Sans, Jua (Google Fonts, OFL)
+- 모델: three.js 예제의 `Soldier.glb` (webgl_animation_skinning_blending), `ferrari.glb` (webgl_materials_car), `LeePerrySmith.glb` (webgl_decals)
+- 폰트: Noto Sans KR (Google Fonts, OFL), 간판은 카페24 써라운드 (카페24, 무료 폰트)
 
 ## 라이선스
 

@@ -249,13 +249,15 @@ function buildMorphs( geometry, lowerLip, upperLip ) {
 // 머리 중심에서 본 방향으로 머리카락 자리를 정한다: 앞(이마)은 높고, 귀 위는 낮고, 뒤(목덜미)는 아주 낮다
 const HAIR_CENTER = new THREE.Vector3( F.cx, 1.55, - 0.2 );
 
-function hairAmount( x, y, z, female ) {
+function hairAmount( x, y, z, female, fringe = 0 ) {
 
 	const dx = x - HAIR_CENTER.x, dy = y - HAIR_CENTER.y, dz = z - HAIR_CENTER.z;
 	const len = Math.hypot( dx, dy, dz ) || 1;
 	const up = dy / len;
 	const t = Math.abs( Math.atan2( dx, dz ) ) / Math.PI; // 0 = 정면, 1 = 뒤
-	const table = [ [ 0, female ? 0.5 : 0.56 ], [ 0.17, female ? 0.42 : 0.47 ], [ 0.32, 0.3 ], [ 0.5, 0.16 ], [ 0.7, - 0.1 ], [ 1, - 0.5 ] ];
+	// fringe: 앞머리를 이마 아래로 얼마나 내리는지 (한국식 쉼표머리·시스루뱅)
+	const front = ( female ? 0.5 : 0.56 ) - fringe;
+	const table = [ [ 0, front ], [ 0.17, Math.min( front + 0.04, female ? 0.42 : 0.47 ) ], [ 0.32, 0.3 ], [ 0.5, 0.16 ], [ 0.7, - 0.1 ], [ 1, - 0.5 ] ];
 	let line = table[ table.length - 1 ][ 1 ];
 
 	for ( let k = 1; k < table.length; k ++ ) {
@@ -325,14 +327,14 @@ function hairUV( geometry ) {
 
 }
 
-function hairCap( geometry, female, volume ) {
+function hairCap( geometry, female, volume, fringe = 0 ) {
 
 	const p = geometry.attributes.position;
 	const nrm = geometry.attributes.normal;
 	const index = geometry.index.array;
 	const amount = new Float32Array( p.count );
 
-	for ( let i = 0; i < p.count; i ++ ) amount[ i ] = hairAmount( p.getX( i ), p.getY( i ), p.getZ( i ), female );
+	for ( let i = 0; i < p.count; i ++ ) amount[ i ] = hairAmount( p.getX( i ), p.getY( i ), p.getZ( i ), female, fringe );
 
 	const map = new Map();
 	const positions = [];
@@ -436,9 +438,9 @@ function hairCurtain( geometry, bottom ) {
 }
 
 // ---------------------------------------------------------------------------
-// 여자 피부 텍스처: 정점의 UV 자리에 붓질해서 수염 자국을 지우고, 입술·볼에 색을 얹는다
+// 피부 텍스처: 정점의 UV 자리에 붓질해서 수염 자국을 지우고 (남자도 깔끔하게 면도), 여자는 입술·볼에 색을 얹는다
 
-function makeupTexture( image, geometry ) {
+function makeupTexture( image, geometry, female = true ) {
 
 	const W = image.width, H = image.height;
 	const canvas = document.createElement( 'canvas' );
@@ -491,10 +493,12 @@ function makeupTexture( image, geometry ) {
 
 		// 수염 자국 (턱, 인중, 턱선)
 		const beard = smooth( y, - 1.0, - 0.4 ) * smooth( y, 1.0, 0.75 ) * smooth( adx, 1.45, 1.05 ) * ( 1 - lips );
-		dab( i, skin.join( ',' ), beard * 0.22, 1.6 );
+		dab( i, skin.join( ',' ), beard * ( female ? 0.22 : 0.17 ), 1.6 );
 
 		// 눈썹 아랫부분을 지워 가늘게
-		dab( i, skin.join( ',' ), gauss( adx - 0.62, y - 1.9, 0, 0.5, 0.06 ) * 0.25, 1.2 );
+		dab( i, skin.join( ',' ), gauss( adx - 0.62, y - 1.9, 0, 0.5, 0.06 ) * ( female ? 0.25 : 0.1 ), 1.2 );
+
+		if ( ! female ) continue;
 
 		// 볼터치, 아이섀도, 입술
 		dab( i, '235,120,120', gauss( adx - 0.85, y - 1.0, 0, 0.32, 0.25 ) * 0.05, 2 );
@@ -515,74 +519,120 @@ function makeupTexture( image, geometry ) {
 
 function eyeTexture( female ) {
 
-	const w = 256, h = 152;
+	// 실제 눈처럼: 흰자는 가장자리로 갈수록 그늘지고, 진갈색 홍채에 결과 테두리, 젖은 하이라이트
+	const w = 512, h = 304;
 	const canvas = document.createElement( 'canvas' );
 	canvas.width = w;
 	canvas.height = h;
 	const ctx = canvas.getContext( '2d' );
+	ctx.scale( 2, 2 );
+	const cx = 128, cy = 80, R = 33;
 
 	const almond = () => {
 
 		ctx.beginPath();
-		ctx.moveTo( 18, 82 );
-		ctx.bezierCurveTo( 70, 18, 186, 14, 240, 74 );
-		ctx.bezierCurveTo( 190, 128, 74, 134, 18, 82 );
+		ctx.moveTo( 20, 86 );
+		ctx.bezierCurveTo( 64, 34, 176, 22, 238, 70 );
+		ctx.bezierCurveTo( 196, 116, 78, 124, 20, 86 );
 		ctx.closePath();
 
 	};
 
-	// 흰자
-	almond();
-	const white = ctx.createRadialGradient( 128, 78, 10, 128, 78, 120 );
-	white.addColorStop( 0, '#fbf8f4' );
-	white.addColorStop( 0.75, '#e9ddd6' );
-	white.addColorStop( 1, '#c99c92' );
-	ctx.fillStyle = white;
-	ctx.fill();
-
-	// 홍채와 동공
 	ctx.save();
 	almond();
 	ctx.clip();
-	const iris = ctx.createRadialGradient( 128, 76, 6, 128, 76, 38 );
-	iris.addColorStop( 0, '#3b2414' );
-	iris.addColorStop( 0.55, '#5a3a22' );
-	iris.addColorStop( 0.9, '#2a180c' );
-	iris.addColorStop( 1, '#120a05' );
+
+	// 흰자
+	const white = ctx.createRadialGradient( cx, cy, 8, cx, cy, 125 );
+	white.addColorStop( 0, '#f4efe9' );
+	white.addColorStop( 0.55, '#e6dcd3' );
+	white.addColorStop( 1, '#b98f86' );
+	ctx.fillStyle = white;
+	ctx.fillRect( 0, 0, 256, 152 );
+
+	// 눈 안쪽 붉은 살 (눈물언덕)
+	const caruncle = ctx.createRadialGradient( 26, 86, 0, 26, 86, 16 );
+	caruncle.addColorStop( 0, 'rgba(205,120,115,0.9)' );
+	caruncle.addColorStop( 1, 'rgba(205,120,115,0)' );
+	ctx.fillStyle = caruncle;
+	ctx.fillRect( 0, 60, 60, 50 );
+
+	// 홍채: 진갈색 결
+	const iris = ctx.createRadialGradient( cx, cy, 4, cx, cy, R );
+	iris.addColorStop( 0, '#2a170b' );
+	iris.addColorStop( 0.45, '#4a2d18' );
+	iris.addColorStop( 0.8, '#36210f' );
+	iris.addColorStop( 1, '#140b05' );
 	ctx.fillStyle = iris;
 	ctx.beginPath();
-	ctx.arc( 128, 76, 38, 0, Math.PI * 2 );
-	ctx.fill();
-	ctx.fillStyle = '#050302';
-	ctx.beginPath();
-	ctx.arc( 128, 76, 15, 0, Math.PI * 2 );
-	ctx.fill();
-	ctx.fillStyle = 'rgba(255,255,255,0.9)';
-	ctx.beginPath();
-	ctx.arc( 141, 63, 7, 0, Math.PI * 2 );
+	ctx.arc( cx, cy, R, 0, Math.PI * 2 );
 	ctx.fill();
 
-	// 윗눈꺼풀 그림자
-	const lid = ctx.createLinearGradient( 0, 20, 0, 70 );
-	lid.addColorStop( 0, 'rgba(60,30,20,0.55)' );
-	lid.addColorStop( 1, 'rgba(60,30,20,0)' );
+	for ( let i = 0; i < 140; i ++ ) {
+
+		const a = Math.random() * Math.PI * 2;
+		const r0 = 12 + Math.random() * 4, r1 = R - 2 - Math.random() * 6;
+		const v = 60 + Math.random() * 50;
+		ctx.strokeStyle = `rgba(${ v + 30 },${ v },${ v * 0.55 },0.35)`;
+		ctx.lineWidth = 0.7;
+		ctx.beginPath();
+		ctx.moveTo( cx + Math.cos( a ) * r0, cy + Math.sin( a ) * r0 );
+		ctx.lineTo( cx + Math.cos( a ) * r1, cy + Math.sin( a ) * r1 );
+		ctx.stroke();
+
+	}
+
+	ctx.strokeStyle = 'rgba(10,6,3,0.85)';
+	ctx.lineWidth = 2.5;
+	ctx.beginPath();
+	ctx.arc( cx, cy, R - 1, 0, Math.PI * 2 );
+	ctx.stroke();
+
+	// 동공
+	ctx.fillStyle = '#040302';
+	ctx.beginPath();
+	ctx.arc( cx, cy, 12.5, 0, Math.PI * 2 );
+	ctx.fill();
+
+	// 젖은 하이라이트 (창 반사 + 작은 점)
+	ctx.fillStyle = 'rgba(255,255,255,0.75)';
+	ctx.beginPath();
+	ctx.ellipse( cx + 11, cy - 11, 6, 4.5, - 0.4, 0, Math.PI * 2 );
+	ctx.fill();
+	ctx.fillStyle = 'rgba(255,255,255,0.4)';
+	ctx.beginPath();
+	ctx.arc( cx - 12, cy + 10, 2.2, 0, Math.PI * 2 );
+	ctx.fill();
+
+	// 윗눈꺼풀이 드리우는 그늘
+	const lid = ctx.createLinearGradient( 0, 30, 0, 78 );
+	lid.addColorStop( 0, 'rgba(45,25,18,0.7)' );
+	lid.addColorStop( 1, 'rgba(45,25,18,0)' );
 	ctx.fillStyle = lid;
-	ctx.fillRect( 0, 0, w, 70 );
+	ctx.fillRect( 0, 0, 256, 80 );
 	ctx.restore();
 
-	// 속눈썹 라인
-	ctx.strokeStyle = '#140c08';
+	// 속눈썹 라인 (위는 진하게, 아래는 아주 옅게)
 	ctx.lineCap = 'round';
-	ctx.lineWidth = female ? 11 : 7;
+	ctx.strokeStyle = 'rgba(18,10,6,0.95)';
+	ctx.lineWidth = female ? 6 : 4;
 	ctx.beginPath();
-	ctx.moveTo( 16, 84 );
-	ctx.bezierCurveTo( 70, 18, 186, 14, female ? 252 : 240, female ? 60 : 74 );
+	ctx.moveTo( 20, 87 );
+	ctx.bezierCurveTo( 64, 34, 176, 22, female ? 246 : 238, female ? 64 : 70 );
 	ctx.stroke();
-	ctx.lineWidth = 3;
-	ctx.strokeStyle = 'rgba(40,22,14,0.7)';
+	ctx.lineWidth = 1.6;
+	ctx.strokeStyle = 'rgba(70,40,28,0.45)';
 	ctx.beginPath();
-	ctx.moveTo( 24, 86 );
-	ctx.bezierCurveTo( 74, 128, 190, 124, 236, 78 );
+	ctx.moveTo( 26, 88 );
+	ctx.bezierCurveTo( 80, 120, 194, 114, 234, 74 );
+	ctx.stroke();
+
+	// 쌍꺼풀 주름 그림자
+	ctx.strokeStyle = 'rgba(90,55,40,0.35)';
+	ctx.lineWidth = 2;
+	ctx.beginPath();
+	ctx.moveTo( 40, 58 );
+	ctx.bezierCurveTo( 80, 22, 180, 14, 226, 50 );
 	ctx.stroke();
 
 	const texture = new THREE.CanvasTexture( canvas );
@@ -594,9 +644,16 @@ function eyeTexture( female ) {
 
 // ---------------------------------------------------------------------------
 
-export const SKIN_TONES = [ 0xffffff, 0xf3dccb, 0xe6c2a6, 0xd9b08e ];
-export const HAIR_COLORS = [ 0x0d0b0a, 0x1c1410, 0x2e1f16, 0x4a3324, 0x7a5a3c, 0x8a8478 ];
-export const HAIR_STYLES = { male: [ 'short', 'buzz', 'volume', 'short' ], female: [ 'long', 'bob', 'ponytail', 'long' ] };
+// 스캔 텍스처의 분홍기를 누르고 노르스름한 동아시아 피부 톤으로
+export const SKIN_TONES = [ 0xfff0dc, 0xf8e2c6, 0xefd3b2, 0xe0bf98 ];
+export const HAIR_COLORS = [ 0x0d0b0a, 0x1a120d, 0x2a1c13, 0x3f2b1d, 0x6b4c33, 0x4f4c48 ];
+export const HAIR_STYLES = { male: [ 'comma', 'twoblock', 'short', 'comma' ], female: [ 'long', 'bob', 'ponytail', 'longParted' ] };
+
+// [두께, 앞머리 내림, 늘어뜨린 머리 끝 높이]
+const STYLE = {
+	comma: [ 0.15, 0.15, null ], twoblock: [ 0.18, 0.11, null ], short: [ 0.11, 0.03, null ], buzz: [ 0.03, 0, null ],
+	long: [ 0.16, 0.07, - 4.6 ], longParted: [ 0.15, 0, - 4.2 ], bob: [ 0.13, 0.05, - 0.9 ], ponytail: [ 0.07, 0.03, null ]
+};
 
 export class FaceKit {
 
@@ -614,8 +671,13 @@ export class FaceKit {
 		const source = gltf.scene.children[ 0 ].geometry;
 
 		// 입을 벌리면 입술 안쪽 면이 보이므로 양면
-		this.skin = SKIN_TONES.map( ( tone ) => new THREE.MeshStandardMaterial( { map, normalMap, normalScale: new THREE.Vector2( 0.6, 0.6 ), color: tone, roughness: 0.62, side: THREE.DoubleSide } ) );
-		this.hair = HAIR_COLORS.map( ( c ) => new THREE.MeshStandardMaterial( { color: c, map: strands(), roughness: 0.5, side: THREE.DoubleSide } ) );
+		this.skin = SKIN_TONES.map( ( tone ) => new THREE.MeshStandardMaterial( { map, normalMap, normalScale: new THREE.Vector2( 0.45, 0.45 ), color: tone, roughness: 0.58, side: THREE.DoubleSide } ) );
+		this.hair = HAIR_COLORS.map( ( c ) => new THREE.MeshStandardMaterial( { color: c, map: strands(), roughness: 0.48, side: THREE.DoubleSide } ) );
+		this.hats = new Map();
+		this.frameMaterial = new THREE.MeshStandardMaterial( { color: 0x121212, roughness: 0.35, metalness: 0.3 } );
+		this.sunLensMaterial = new THREE.MeshStandardMaterial( { color: 0x050505, roughness: 0.05, metalness: 0.6 } );
+		this.clearLensMaterial = new THREE.MeshStandardMaterial( { color: 0xcfe3ff, roughness: 0.05, transparent: true, opacity: 0.18, depthWrite: false } );
+		this.glasses = glassesGeometry();
 		this.mouthMaterial = new THREE.MeshStandardMaterial( { color: 0x2a0707, roughness: 0.9 } );
 		this.teethMaterial = new THREE.MeshStandardMaterial( { color: 0xf2ede2, roughness: 0.35 } );
 		this.mouthGeometry = new THREE.SphereGeometry( 1, 16, 10 );
@@ -636,7 +698,7 @@ export class FaceKit {
 			const eyes = [ [ F.eyeR, - 0.18 ], [ F.eyeL, 0.18 ] ].map( ( [ x, yaw ] ) => {
 
 				const center = new THREE.Vector3( x, F.eyeY, F.eyeZ );
-				const size = female ? new THREE.Vector3( 0.68, 0.42, 0.9 ) : new THREE.Vector3( 0.62, 0.37, 0.9 );
+				const size = female ? new THREE.Vector3( 0.64, 0.37, 0.9 ) : new THREE.Vector3( 0.6, 0.33, 0.9 );
 				const g = new DecalGeometry( probe, center, new THREE.Euler( 0, yaw, 0 ), size );
 				g.translate( - center.x, - center.y, - center.z );
 				return { geometry: g, center };
@@ -646,28 +708,34 @@ export class FaceKit {
 			buildMorphs( geometry, lowerLip, upperLip );
 			geometry.computeBoundingSphere();
 
-			const skin = female ?
-				SKIN_TONES.map( ( tone, k ) => {
+			// 남자는 면도한 피부, 여자는 화장한 피부
+			const skinMap = makeupTexture( map.image, geometry, female );
+			const skin = SKIN_TONES.map( ( tone, k ) => {
 
-					const m = this.skin[ k ].clone();
-					m.map = this.femaleMap ||= makeupTexture( map.image, geometry );
-					return m;
+				const m = this.skin[ k ].clone();
+				m.map = skinMap;
+				return m;
 
-				} ) : this.skin;
+			} );
 
 			const hair = {};
 			for ( const style of HAIR_STYLES[ sex ] ) {
 
 				if ( hair[ style ] ) continue;
-				const volume = { short: 0.12, buzz: 0.03, volume: 0.26, long: 0.2, bob: 0.18, ponytail: 0.08 }[ style ];
-				const parts = [ hairCap( geometry, female, volume ) ];
-				if ( style === 'long' ) parts.push( hairCurtain( geometry, - 4.6 ) );
-				if ( style === 'bob' ) parts.push( hairCurtain( geometry, - 0.6 ) );
+				const [ volume, fringe, curtain ] = STYLE[ style ];
+				const parts = [ hairCap( geometry, female, volume, fringe ) ];
+				if ( curtain !== null ) parts.push( hairCurtain( geometry, curtain ) );
 				hair[ style ] = parts;
 
 			}
 
-			this.sexes[ sex ] = { geometry, eyes, eyeMaterial: material, hair, skin };
+			// 모자: 비니는 머리를 덮는 두툼한 껍데기, 야구모자는 둥근 머리 + 챙
+			const hats = {
+				beanie: [ hairCap( geometry, female, 0.36, 0.08 ) ],
+				cap: [ hairCap( geometry, female, 0.24, 0.02 ), new THREE.CylinderGeometry( 1.75, 1.75, 0.08, 24, 1, false, - Math.PI / 2, Math.PI ).scale( 1, 1, 0.75 ).rotateX( 0.18 ).translate( F.cx, 2.86, 1.25 ) ]
+			};
+
+			this.sexes[ sex ] = { geometry, eyes, eyeMaterial: material, hair, skin, hats };
 
 		}
 
@@ -681,20 +749,65 @@ export class FaceKit {
 
 }
 
+// 안경: 둥근 사각 테 두 개 + 코받침 + 다리 (스캔 좌표)
+function glassesGeometry() {
+
+	const rim = ( x ) => new THREE.TorusGeometry( 0.42, 0.035, 6, 28 ).scale( 1.15, 0.85, 1 ).translate( x, F.eyeY - 0.02, 2.38 );
+	const frame = mergeSimple( [
+		rim( F.eyeR ), rim( F.eyeL ),
+		new THREE.BoxGeometry( 0.36, 0.05, 0.05 ).translate( F.cx, F.eyeY + 0.1, 2.42 ),
+		new THREE.BoxGeometry( 0.05, 0.05, 2.3 ).translate( F.eyeR - 0.5, F.eyeY + 0.05, 1.25 ),
+		new THREE.BoxGeometry( 0.05, 0.05, 2.3 ).translate( F.eyeL + 0.5, F.eyeY + 0.05, 1.25 )
+	] );
+	const lens = ( x ) => new THREE.CircleGeometry( 0.42, 24 ).scale( 1.15, 0.85, 1 ).translate( x, F.eyeY - 0.02, 2.37 );
+	return { frame, lenses: mergeSimple( [ lens( F.eyeR ), lens( F.eyeL ) ] ) };
+
+}
+
+// 인덱스 있는 지오메트리 몇 개를 하나로 (위치·법선만)
+function mergeSimple( list ) {
+
+	const positions = [], normals = [], index = [];
+	let base = 0;
+
+	for ( const g of list ) {
+
+		const p = g.attributes.position, n = g.attributes.normal;
+		for ( let i = 0; i < p.count; i ++ ) {
+
+			positions.push( p.getX( i ), p.getY( i ), p.getZ( i ) );
+			normals.push( n.getX( i ), n.getY( i ), n.getZ( i ) );
+
+		}
+
+		for ( const i of g.index.array ) index.push( i + base );
+		base += p.count;
+
+	}
+
+	const g = new THREE.BufferGeometry();
+	g.setAttribute( 'position', new THREE.Float32BufferAttribute( positions, 3 ) );
+	g.setAttribute( 'normal', new THREE.Float32BufferAttribute( normals, 3 ) );
+	g.setIndex( index );
+	return g;
+
+}
+
 // ---------------------------------------------------------------------------
 // 행인 한 명의 얼굴
 
 export class Face {
 
-	constructor( kit, sex, { skin = 0, hairColor = 0, hairStyle = null } = {} ) {
+	constructor( kit, sex, { skin = 0, hairColor = 0, hairStyle = null, hat = null, glasses = null, offset = null } = {} ) {
 
 		const data = kit.sexes[ sex ];
 		this.group = new THREE.Group();
 
-		// 스캔 좌표 → 머리 뼈 좌표 (정수리가 male02 머리 끝 높이에 오도록)
+		// 스캔 좌표 → 머리 뼈 좌표 (offset: 머리 관절에서 본 스캔 원점)
 		const s = HEAD_SCALE * ( sex === 'female' ? 0.96 : 1 );
 		this.group.scale.setScalar( s );
 		this.group.position.set( - F.cx * s, 0.039 - ( sex === 'female' ? 0.006 : 0 ), 0.004 );
+		if ( offset ) this.group.position.set( - F.cx * s + offset.x, offset.y - ( sex === 'female' ? 0.006 : 0 ), offset.z );
 
 		this.head = new THREE.Mesh( data.geometry, data.skin[ skin ] );
 		this.head.name = 'PersonHead';
@@ -726,11 +839,28 @@ export class Face {
 
 		} );
 
-		// 머리카락
+		// 머리카락 (모자를 쓰면 정수리는 모자가 덮고 늘어뜨린 머리만 보인다)
 		const style = hairStyle || HAIR_STYLES[ sex ][ 0 ];
-		for ( const g of data.hair[ style ] ) this.group.add( new THREE.Mesh( g, kit.hair[ hairColor ] ) );
+		const parts = data.hair[ style ];
+		for ( const g of hat ? parts.slice( 1 ) : parts ) this.group.add( new THREE.Mesh( g, kit.hair[ hairColor ] ) );
 
-		if ( style === 'ponytail' ) {
+		if ( hat ) {
+
+			if ( ! kit.hats.has( hat.color ) ) kit.hats.set( hat.color, new THREE.MeshStandardMaterial( { color: hat.color, roughness: 0.85, side: THREE.DoubleSide } ) );
+			for ( const g of data.hats[ hat.kind ] ) this.group.add( new THREE.Mesh( g, kit.hats.get( hat.color ) ) );
+
+		}
+
+		if ( glasses ) {
+
+			this.group.add( new THREE.Mesh( kit.glasses.frame, kit.frameMaterial ) );
+			const lenses = new THREE.Mesh( kit.glasses.lenses, glasses === 'sun' ? kit.sunLensMaterial : kit.clearLensMaterial );
+			lenses.renderOrder = 4;
+			this.group.add( lenses );
+
+		}
+
+		if ( style === 'ponytail' && ! hat ) {
 
 			const tail = new THREE.Mesh( kit.ponytail, kit.hair[ hairColor ] );
 			tail.position.set( F.cx, 2.4, - 2.55 );
@@ -756,7 +886,7 @@ export class Face {
 		for ( let i = 0; i < MORPHS.length; i ++ ) {
 
 			let target = expr[ MORPHS[ i ] ] || 0;
-			if ( i === 0 && expr.talk ) target = Math.max( target, ( Math.sin( this.time * 17 ) * 0.5 + 0.5 ) * 0.45 * expr.talk );
+			if ( i === 0 && expr.talk ) target = Math.max( target, ( Math.sin( this.time * 15 ) * 0.5 + 0.5 ) * ( 0.15 + 0.15 * Math.sin( this.time * 3.1 ) ) * expr.talk );
 			this.weights[ i ] += ( target - this.weights[ i ] ) * k;
 			this.head.morphTargetInfluences[ i ] = this.weights[ i ];
 

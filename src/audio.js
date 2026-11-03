@@ -313,6 +313,78 @@ export class Sound {
 
 	}
 
+	// 행인 목소리: 모음 두 개(포먼트)를 거친 성대 소리로 "으엑", "하하하", "헉", "우와", "아 진짜"
+	voice( type, distance = 10, female = false, variety = 0.5 ) {
+
+		if ( ! this.ctx ) return;
+		const ctx = this.ctx;
+		const level = 0.09 / ( 1 + distance / 9 );
+		if ( level < 0.004 ) return;
+		const f0 = ( female ? 215 : 118 ) * ( 0.9 + variety * 0.2 );
+
+		// [길이, F1, F2, 시작 음높이 배수, 끝 음높이 배수, 숨소리]
+		const V = {
+			disgust: [ [ 0.16, 360, 1350, 1.1, 1.0, 0.3 ], [ 0.22, 520, 1850, 1.15, 0.75, 0.25 ] ],
+			laugh: [ [ 0.1, 800, 1250, 1.3, 1.25, 0.6 ], [ 0.1, 800, 1250, 1.35, 1.25, 0.6 ], [ 0.1, 800, 1250, 1.3, 1.2, 0.6 ], [ 0.14, 800, 1250, 1.25, 1.05, 0.6 ] ],
+			scared: [ [ 0.05, 600, 1100, 1.4, 1.5, 0.9 ], [ 0.12, 620, 1050, 1.6, 1.3, 0.5 ] ],
+			lookup: [ [ 0.2, 320, 800, 1.0, 1.25, 0.15 ], [ 0.32, 780, 1220, 1.35, 1.1, 0.15 ] ],
+			angry: [ [ 0.18, 760, 1220, 1.05, 0.95, 0.2 ], [ 0.08, 300, 2200, 1.0, 1.0, 0.4 ], [ 0.2, 700, 1300, 1.1, 0.8, 0.25 ] ]
+		}[ type ];
+		if ( ! V ) return;
+
+		let t = ctx.currentTime + 0.02 + Math.random() * 0.08;
+
+		for ( const [ dur, f1, f2, p0, p1, breath ] of V ) {
+
+			const src = ctx.createOscillator();
+			src.type = 'sawtooth';
+			src.frequency.setValueAtTime( f0 * p0, t );
+			src.frequency.linearRampToValueAtTime( f0 * p1, t + dur );
+
+			const mix = ctx.createGain();
+			const out = ctx.createGain();
+			out.gain.setValueAtTime( 0, t );
+			out.gain.linearRampToValueAtTime( level, t + 0.02 );
+			out.gain.setValueAtTime( level, t + dur * 0.7 );
+			out.gain.linearRampToValueAtTime( 0, t + dur );
+
+			for ( const [ f, q, g ] of [ [ f1, 6, 1 ], [ f2, 9, 0.6 ] ] ) {
+
+				const bp = ctx.createBiquadFilter();
+				bp.type = 'bandpass';
+				bp.frequency.value = f * ( female ? 1.15 : 1 );
+				bp.Q.value = q;
+				const gain = ctx.createGain();
+				gain.gain.value = g * ( 1 - breath * 0.6 );
+				src.connect( bp ).connect( gain ).connect( mix );
+
+			}
+
+			// 숨소리
+			if ( breath > 0 ) {
+
+				const n = this.noiseSource();
+				const hp = ctx.createBiquadFilter();
+				hp.type = 'bandpass';
+				hp.frequency.value = f2;
+				hp.Q.value = 1.2;
+				const ng = ctx.createGain();
+				ng.gain.value = breath * 0.5;
+				n.connect( hp ).connect( ng ).connect( mix );
+				n.start( t );
+				n.stop( t + dur );
+
+			}
+
+			mix.connect( out ).connect( this.master );
+			src.start( t );
+			src.stop( t + dur + 0.02 );
+			t += dur + ( type === 'laugh' ? 0.05 : 0.02 );
+
+		}
+
+	}
+
 	// 사람 비명 (짧게 미끄러지는 소리)
 	scream( distance = 10, female = false ) {
 

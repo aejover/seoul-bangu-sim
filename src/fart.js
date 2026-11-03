@@ -34,26 +34,14 @@ export function fartPhysics( diameterMM ) {
 }
 
 // 몸무게를 들어 올리는 지름 (추력의 세로 성분 0.8 F 가 체중을 넘는 지점)
-export const LIFTOFF_DIAMETER = Math.sqrt( ( BODY_MASS * G / 0.8 ) / ( 2 * PRESSURE ) * 4 / Math.PI ) * 1000;
-
-const WORDS = {
-	tiny: [ '삐익~', '피식', '삐이익', '뽀옹' ],
-	small: [ '뿡!', '뿡뿡', '뽕!', '부웅' ],
-	mid: [ '뿌웅!!', '뿌르륵', '부우웅!!', '뿌직' ],
-	big: [ '뿌와아앙!!!', '부르르르릉', '뿌다다닥!!', '콰르릉' ],
-	huge: [ '콰과광!!!!', '쿠와아앙!!!', '부와아아앙', '드르르르륵!!' ]
-};
-
-function wordFor( force ) {
-
-	const list = force < 10 ? WORDS.tiny : force < 60 ? WORDS.small : force < 250 ? WORDS.mid : force < 600 ? WORDS.big : WORDS.huge;
-	return list[ Math.floor( Math.random() * list.length ) ];
-
-}
+export const LIFTOFF_FORCE = BODY_MASS * G / 0.8;
+export const LIFTOFF_DIAMETER = Math.sqrt( LIFTOFF_FORCE / ( 2 * PRESSURE ) * 4 / Math.PI ) * 1000;
 
 // ---------------------------------------------------------------------------
 
-const MAX = 1400;
+// 입자 수 상한. 예전에는 1400 개가 4 m 넘게 커지면서 카메라를 덮어
+// 화면 전체를 수백 겹 칠하다 GPU 가 멈추고 탭이 튕겼다
+const MAX = 600;
 
 function puffTexture() {
 
@@ -97,8 +85,7 @@ export class FartSystem {
 		this.time = 0;
 		this.minUntil = 0;
 		this.emitCarry = 0;
-		this.wordTimer = 0;
-		this.events = []; // UI 로 넘길 의성어/알림
+		this.events = []; // 충격파 / 가스 바닥 알림
 		this.shake = 0;
 		this.totalFarts = 0;
 
@@ -167,7 +154,20 @@ export class FartSystem {
 
 	}
 
-	update( dt, held, me, nightness ) {
+	// 초기화: 가스를 모두 걷어 내고 탱크를 채운다
+	reset() {
+
+		if ( this.active ) this.end( false );
+		this.minUntil = 0;
+		this.age.fill( 1e9 );
+		this.tank = 1;
+		this.shake = 0;
+		this.ring.visible = false;
+		this.events.length = 0;
+
+	}
+
+	update( dt, held, me, nightness, camera ) {
 
 		this.time += dt;
 		const p = this.physics;
@@ -183,17 +183,10 @@ export class FartSystem {
 		if ( this.active ) {
 
 			this.tank = Math.max( 0, this.tank - this.drainRate * dt );
-			this.force = p.force * ( 0.85 + Math.random() * 0.3 );
+			// 살짝만 떨린다 (크게 떨리면 이륙선 바로 아래에서도 떠 버린다)
+			this.force = p.force * ( 0.97 + Math.random() * 0.06 );
 			this.sound.updateFart( dt, { hz: p.hz, volume: this.volume() } );
 			this.emit( dt, me );
-
-			this.wordTimer -= dt;
-			if ( this.wordTimer <= 0 ) {
-
-				this.events.push( { type: 'word', text: wordFor( p.force ), force: p.force, color: p.grade.color } );
-				this.wordTimer = 0.55 + Math.random() * 0.3;
-
-			}
 
 			this.shake = Math.min( 0.5, Math.pow( p.force, 0.6 ) / 260 );
 
@@ -205,7 +198,7 @@ export class FartSystem {
 
 		}
 
-		this.simulate( dt, me );
+		this.simulate( dt, camera.position );
 
 		// 밤에는 가스가 가로등 빛에 덜 보이니 약간 어둡게
 		this.brightness.value = THREE.MathUtils.lerp( 7, 2.2, nightness );
@@ -236,7 +229,6 @@ export class FartSystem {
 		const p = this.physics;
 		this.force = p.force;
 		this.sound.startFart( { hz: p.hz, volume: this.volume(), force: p.force } );
-		this.wordTimer = 0;
 		this.events.push( { type: 'start', force: p.force } );
 
 		if ( p.force > 250 ) {
@@ -262,7 +254,7 @@ export class FartSystem {
 	emit( dt, me ) {
 
 		const p = this.physics;
-		const rate = 50 + p.diameterMM * 5.5; // 초당 입자 수
+		const rate = 30 + p.diameterMM * 2.4; // 초당 입자 수
 		this.emitCarry += rate * dt;
 
 		const speed = 2 + Math.sqrt( p.force ) * 0.32;
@@ -288,14 +280,14 @@ export class FartSystem {
 			this.vel[ i * 3 + 1 ] = dir.y * s + me.velocity.y;
 			this.vel[ i * 3 + 2 ] = dir.z * s + me.velocity.z;
 			this.age[ i ] = 0;
-			this.life[ i ] = 1.4 + Math.random() * 1.5 + p.diameterMM / 70;
-			this.size0[ i ] = 0.08 + p.diameterMM * 0.004;
+			this.life[ i ] = 1.2 + Math.random() * 1.0 + p.diameterMM / 110;
+			this.size0[ i ] = 0.08 + p.diameterMM * 0.0035;
 
 		}
 
 	}
 
-	simulate( dt, me ) {
+	simulate( dt, eye ) {
 
 		const pos = this.pos, vel = this.vel;
 		const off = this.offsetAttr.array, size = this.sizeAttr.array, alpha = this.alphaAttr.array, tint = this.tintAttr.array;
@@ -343,8 +335,14 @@ export class FartSystem {
 			off[ k + 2 ] = pos[ k + 2 ];
 
 			const u = age / life;
-			size[ i ] = this.size0[ i ] * ( 1 + u * 7 );
-			alpha[ i ] = Math.min( 1, age * 12 ) * ( 1 - u ) * ( 1 - u ) * 0.75;
+			const s = this.size0[ i ] * ( 1 + u * 5 );
+
+			// 카메라 바로 앞 입자는 흐리게 지운다 (화면을 통째로 덮지 않게)
+			const ex = pos[ k ] - eye.x, ey = pos[ k + 1 ] - eye.y, ez = pos[ k + 2 ] - eye.z;
+			const near = Math.min( 1, Math.max( 0, ( Math.sqrt( ex * ex + ey * ey + ez * ez ) - s * 0.7 ) / 3 ) );
+			const a = Math.min( 1, age * 12 ) * ( 1 - u ) * ( 1 - u ) * 0.75 * near;
+			alpha[ i ] = a;
+			size[ i ] = a > 0.01 ? s : 0;
 			tint[ i ] = u;
 
 		}

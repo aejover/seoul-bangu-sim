@@ -1,25 +1,16 @@
 import * as THREE from 'three/webgpu';
-import { Rig, loadBody, walkPose, advancePhase, limb, lerpV, legIK, armIK, blobShadowTexture, dominantBone } from './rig.js';
-import { FaceKit, Face, HAIR_STYLES, HAIR_COLORS, SKIN_TONES } from './face.js';
+import { walkPose, limb, lerpV, blobShadowTexture } from './rig.js';
+import { FaceKit, Face, HAIR_STYLES, SKIN_TONES } from './face.js';
+import { loadSoldier, SoldierBody, dressedGeometry, addProps, OUTFITS, ALL } from './soldier.js';
+import { LIFTOFF_FORCE } from './fart.js';
 
 // 서울 인도를 걷는 사람들과 자전거 타는 사람들.
-// 몸은 내 몸과 같은 male02 + 자동 리깅, 얼굴은 Lee Perry-Smith 스캔. 내 방구에 반응한다.
+// 몸은 Soldier (걷기·달리기 애니메이션) + 사진 속 옷차림, 얼굴은 Lee Perry-Smith 스캔. 내 방구에 반응한다.
 
-const SHIRTS = [ 0xf2f2ee, 0x1d2a44, 0x161616, 0xc9b79c, 0x8a8f96, 0xb23a3a, 0x7fa7d6, 0x5d6b3c, 0xe8a0b4, 0xf0c94a, 0x2f6b5a, 0x6a4c93 ];
-const PANTS = [ 0x15161a, 0x23304d, 0x4a4d55, 0x3d5a80, 0xb8a888, 0x2b2b2b ];
-const SHOES = [ 0xf4f4f0, 0x111111, 0x6b4a2e, 0xdddddd ];
-const HAND_SKIN = [ 0xe9c3a4, 0xe2b896, 0xd4a582, 0xc49270 ];
+const HAND_SKIN = [ 0xedc9a8, 0xe5bc98, 0xd9ac85, 0xc99a72 ];
 const BIKE_COLORS = [ 0xdfe3e0, 0xdfe3e0, 0xc62828, 0x1e88e5, 0x212121, 0xf9a825 ];
+const NONE = { hips: 0, spine: 0, head: 0, armL: 0, armR: 0, legs: 0 };
 
-const SAY = {
-	disgust: [ '윽 냄새!', '누가 뀌었어?!', '아 뭐야!', '숨 참아!', '으 고구마 냄새' ],
-	laugh: [ 'ㅋㅋㅋㅋ', '푸하하', 'ㅋㅋ 대박', '방구 실화?' ],
-	scared: [ '헉!', '도망쳐!', '가스다!!' ],
-	fly: [ '으아아악!', '살려줘!', '엄마아!' ],
-	angry: [ '아 진짜!', '뭐야 저 사람', '신고할 거야!' ],
-	lookup: [ '저게 뭐야?!', '사람이 날아!', '우와' ],
-	bell: [ '따르릉!', '비켜요!' ]
-};
 const pick = ( a ) => a[ Math.floor( Math.random() * a.length ) ];
 const mod = ( a, n ) => ( ( a % n ) + n ) % n;
 const angleTo = ( a ) => Math.atan2( Math.sin( a ), Math.cos( a ) );
@@ -184,141 +175,40 @@ class Bike {
 }
 
 // ---------------------------------------------------------------------------
-// 옷 색: 정점마다 가장 크게 붙은 뼈로 부위를 나눈다
-
-function outfitColors( geometry, outfit ) {
-
-	const n = geometry.attributes.position.count;
-	const colors = new Uint8Array( n * 3 );
-	const p = geometry.attributes.position;
-	const c = new THREE.Color();
-	// 정점 색은 선형 공간 값 (setHex 가 sRGB → 선형으로 바꿔 준다)
-	const set = ( i, hex ) => {
-
-		c.setHex( hex );
-		colors[ i * 3 ] = Math.round( c.r * 255 );
-		colors[ i * 3 + 1 ] = Math.round( c.g * 255 );
-		colors[ i * 3 + 2 ] = Math.round( c.b * 255 );
-
-	};
-
-	for ( let i = 0; i < n; i ++ ) {
-
-		const bone = dominantBone( geometry, i );
-		const y = p.getY( i ), x = p.getX( i ), z = p.getZ( i );
-		let hex = outfit.shirt;
-
-		if ( /hand/.test( bone ) ) hex = outfit.skin;
-		else if ( /foot/.test( bone ) ) hex = outfit.shoes;
-		else if ( /forearm/.test( bone ) ) hex = outfit.shortSleeve ? outfit.skin : ( outfit.jacket ?? outfit.shirt );
-		else if ( /shin|thigh/.test( bone ) || bone === 'hips' ) {
-
-			if ( outfit.skirt ) hex = y > 0.52 ? outfit.pants : ( y < 0.12 ? outfit.shoes : outfit.legs );
-			else hex = outfit.pants;
-
-		} else if ( outfit.jacket !== undefined && ! ( Math.abs( x ) < 0.045 && z > 0.06 && y > 1.05 ) ) hex = outfit.jacket;
-
-		set( i, hex );
-
-	}
-
-	return new THREE.BufferAttribute( colors, 3, true );
-
-}
-
-// 여자 몸: 허리는 잘록하게, 골반은 넓게, 가슴, 어깨는 좁게
-function feminizeBody( geometry ) {
-
-	const g = new THREE.BufferGeometry();
-	for ( const name of [ 'normal', 'uv', 'skinIndex', 'skinWeight' ] ) g.setAttribute( name, geometry.attributes[ name ] );
-	const p = geometry.attributes.position.clone();
-	const v = new THREE.Vector3();
-
-	for ( let i = 0; i < p.count; i ++ ) {
-
-		v.fromBufferAttribute( p, i );
-		const bone = dominantBone( geometry, i );
-		const arm = /Arm|forearm|hand|shoulder/.test( bone );
-
-		if ( arm ) {
-
-			v.x -= Math.sign( v.x ) * 0.018;
-
-		} else if ( v.y > 0.7 ) {
-
-			const waist = Math.exp( - Math.pow( ( v.y - 1.06 ) / 0.09, 2 ) );
-			const hip = Math.exp( - Math.pow( ( v.y - 0.88 ) / 0.08, 2 ) );
-			const shoulder = THREE.MathUtils.smoothstep( v.y, 1.3, 1.45 );
-			v.x *= 1 - 0.12 * waist + 0.07 * hip - 0.07 * shoulder;
-			v.z *= 1 - 0.08 * waist;
-
-			// 가슴
-			if ( v.z > 0.04 ) {
-
-				for ( const sx of [ - 1, 1 ] ) {
-
-					const d2 = Math.pow( ( v.x - sx * 0.085 ) / 0.07, 2 ) + Math.pow( ( v.y - 1.26 ) / 0.07, 2 );
-					v.z += 0.045 * Math.exp( - d2 );
-
-				}
-
-			}
-
-		}
-
-		p.setXYZ( i, v.x, v.y, v.z );
-
-	}
-
-	g.setAttribute( 'position', p );
-	g.boundingSphere = geometry.boundingSphere;
-	return g;
-
-}
-
-// ---------------------------------------------------------------------------
 
 class Person {
 
-	constructor( people, kind ) {
+	constructor( people, kind, index ) {
 
 		const female = Math.random() < 0.5;
 		this.sex = female ? 'female' : 'male';
 		this.kind = kind; // walker | cyclist
+		this.index = index;
 		const skin = Math.floor( Math.random() * SKIN_TONES.length );
-		const skirt = female && kind === 'walker' && Math.random() < 0.45;
-		this.outfit = {
-			shirt: pick( SHIRTS ), pants: pick( PANTS ), shoes: pick( SHOES ), skin: HAND_SKIN[ skin ],
-			shortSleeve: Math.random() < 0.3,
-			jacket: Math.random() < 0.35 ? pick( [ 0x2b2b2b, 0x3e4a5c, 0x8a6e4b, 0x5b5b5b, 0x1b2437 ] ) : undefined,
-			skirt, legs: Math.random() < 0.5 ? HAND_SKIN[ skin ] : 0x1a1a1a
-		};
-		if ( skirt ) this.outfit.pants = pick( [ 0x2b2b2b, 0xb23a3a, 0xc9b79c, 0x23304d, 0xe8a0b4, 0x5d6b3c ] );
+		const outfits = OUTFITS[ this.sex ].filter( ( o ) => kind === 'walker' || ! o.skirt );
+		this.outfit = pick( outfits );
 
-		const base = people.bodies[ this.sex ];
-		const geometry = new THREE.BufferGeometry();
-		for ( const name of [ 'position', 'normal', 'skinIndex', 'skinWeight' ] ) geometry.setAttribute( name, base.attributes[ name ] );
-		geometry.setAttribute( 'color', outfitColors( base, this.outfit ) );
-		geometry.boundingSphere = base.boundingSphere;
-
-		this.rig = new Rig( geometry, people.bodyMaterial );
-		this.rig.mesh.frustumCulled = true;
-		this.rig.mesh.receiveShadow = true;
-		this.rig.mesh.name = 'Person';
+		const kit = people.soldier;
+		this.body = new SoldierBody( kit, dressedGeometry( kit, this.outfit, this.sex, HAND_SKIN[ skin ] ), people.bodyMaterial );
+		this.body.mesh.name = 'Person';
+		addProps( this.body, this.outfit );
 
 		this.group = new THREE.Group();
-		this.group.add( this.rig.mesh );
-		this.scale = female ? 0.94 : 1 + ( Math.random() - 0.5 ) * 0.08;
+		this.group.add( this.body.root );
+		this.scale = female ? 0.92 : 0.97 + Math.random() * 0.06;
 		this.group.scale.setScalar( this.scale );
 
 		const styles = HAIR_STYLES[ this.sex ];
-		const grayChance = Math.random() < 0.12;
+		const o = this.outfit;
 		this.face = new Face( people.kit, this.sex, {
 			skin,
-			hairColor: grayChance ? 5 : Math.floor( Math.random() * 5 ),
-			hairStyle: kind === 'cyclist' && this.sex === 'female' ? 'ponytail' : pick( styles )
+			hairColor: Math.random() < 0.08 ? 5 : Math.floor( Math.random() * 4 ),
+			hairStyle: kind === 'cyclist' && female ? 'ponytail' : pick( styles ),
+			hat: o.cap ? { kind: 'cap', color: o.cap } : o.beanie ? { kind: 'beanie', color: o.beanie } : null,
+			glasses: o.sunglasses ? 'sun' : o.glasses || Math.random() < 0.18 ? 'clear' : null,
+			offset: kit.faceOffset
 		} );
-		this.rig.bones.head.add( this.face.group );
+		this.body.attach( 'Head', kit.joints.head ).add( this.face.group );
 
 		this.pos = this.group.position;
 		this.vel = new THREE.Vector3();
@@ -326,22 +216,22 @@ class Person {
 		this.tilt = new THREE.Quaternion();
 		this.yaw = 0;
 		this.speed = 0;
-		this.phase = Math.random() * 10;
 		this.time = Math.random() * 100;
 		this.state = kind === 'cyclist' ? 'ride' : 'walk';
 		this.stateTime = 0;
 		this.cool = 0;
 		this.react = null;
 		this.groundOffset = 0;
-		this.mood = Math.random() < 0.5 ? 0.18 : 0;
+		this.mood = Math.random() < 0.5 ? 0.12 : 0;
 		this.chatty = Math.random() < 0.35;
 		this.personality = Math.random();
-		this.walkSpeed = kind === 'cyclist' ? 3.8 + Math.random() * 2.2 : 1.05 + Math.random() * 0.55;
+		this.walkSpeed = kind === 'cyclist' ? 3.8 + Math.random() * 2.2 : 1.1 + Math.random() * 0.5;
 		this.inset = kind === 'cyclist' ? 4.25 : 1.4 + Math.random() * 2.2;
 		this.dir = Math.random() < 0.5 ? 1 : - 1;
 		this.expr = {};
-		this.lookAt = 0;
+		this.weights = { ...NONE };
 		this.detail = true;
+		this.animAcc = 0;
 
 		if ( kind === 'cyclist' ) {
 
@@ -374,19 +264,20 @@ export class People {
 		this.walkers = options.walkers ?? 30;
 		this.cyclists = options.cyclists ?? 8;
 		this.list = [];
-		this.events = [];
 		this.puffs = [];
 		this.puffTimer = 0;
 		this.rings = new Map();
+		this.frame = 0;
+		this.voiceTimer = 0;
 
 	}
 
 	async load() {
 
-		const [ body, kit, parts ] = await Promise.all( [ loadBody(), new FaceKit().load(), bikeGeometry() ] );
+		const [ soldier, kit, parts ] = await Promise.all( [ loadSoldier(), new FaceKit().load(), bikeGeometry() ] );
+		this.soldier = soldier;
 		this.kit = kit;
-		this.bodies = { male: body, female: feminizeBody( body ) };
-		this.bodyMaterial = new THREE.MeshStandardMaterial( { vertexColors: true, roughness: 0.82, side: THREE.DoubleSide } );
+		this.bodyMaterial = new THREE.MeshStandardMaterial( { vertexColors: true, roughness: 0.78, side: THREE.DoubleSide } );
 		this.bikeParts = parts;
 		this.bikeMaterials = {
 			frame: BIKE_COLORS.map( ( c ) => new THREE.MeshStandardMaterial( { color: c, roughness: 0.4, metalness: 0.3 } ) ),
@@ -405,10 +296,9 @@ export class People {
 		this.shadows.renderOrder = 1;
 		this.shadows.frustumCulled = false;
 		this.scene.add( this.shadows );
-
 		for ( let i = 0; i < total; i ++ ) {
 
-			const p = new Person( this, i < this.walkers ? 'walker' : 'cyclist' );
+			const p = new Person( this, i < this.walkers ? 'walker' : 'cyclist', i );
 			this.scene.add( p.group );
 			if ( p.bike ) this.scene.add( p.bike.group );
 			this.list.push( p );
@@ -483,6 +373,24 @@ export class People {
 
 	}
 
+	// 초기화: 냄새를 걷고 모두 처음처럼 인도로
+	reset( center ) {
+
+		this.puffs = [];
+
+		for ( const p of this.list ) {
+
+			p.angry = 0;
+			p.cool = 0;
+			p.groundOffset = 0;
+			p.weights = { ...NONE };
+			if ( p.bike ) p.bike.group.position.copy( p.pos );
+			this.place( p, center, 1 );
+
+		}
+
+	}
+
 	// ---- 방구 냄새
 
 	smellAt( pos, me, fart ) {
@@ -512,6 +420,9 @@ export class People {
 
 	shock( center, force, radius ) {
 
+		// 이륙선(내 몸이 뜨는 세기) 아래에서는 사람은 날아가지 않고 놀라기만 한다
+		const canLaunch = force >= LIFTOFF_FORCE;
+
 		for ( const p of this.list ) {
 
 			if ( p.state === 'fly' ) continue;
@@ -519,7 +430,7 @@ export class People {
 			const d = rel.length();
 			if ( d > radius ) continue;
 			const strength = force * ( 1 - d / radius );
-			if ( strength > 70 ) this.launch( p, rel.setY( 0 ).normalize(), strength );
+			if ( canLaunch && strength > 70 ) this.launch( p, rel.setY( 0 ).normalize(), strength );
 			else this.startReact( p, 'scared', 1 );
 
 		}
@@ -552,8 +463,7 @@ export class People {
 		p.vel.y = 3 + strength / 60 + Math.random() * 2;
 		p.spin.set( ( Math.random() - 0.5 ) * 8, ( Math.random() - 0.5 ) * 6, ( Math.random() - 0.5 ) * 8 );
 		p.pos.y += 0.2;
-		this.events.push( { type: 'say', text: pick( SAY.fly ), pos: p.pos.clone().setY( p.pos.y + 1.9 ), color: '#ffffff' } );
-		this.sound.scream( this.listener ? this.listener.distanceTo( p.pos ) : 10, p.sex === 'female' );
+		this.say( p, 'scream' );
 
 		if ( p.bike && ! p.bike.flying ) {
 
@@ -574,19 +484,22 @@ export class People {
 		p.stateTime = 0;
 		p.reactTime = type === 'lookup' ? 3 : 1.6 + Math.random() * 1.4;
 
-		if ( Math.random() < 0.6 ) {
+		// 말풍선 없이 목소리만
+		if ( Math.random() < 0.7 ) this.say( p, type );
+		if ( p.bike && this.listener && this.listener.distanceTo( p.pos ) < 25 ) this.sound.bell( this.listener.distanceTo( p.pos ) );
 
-			const color = type === 'laugh' ? '#ffe066' : type === 'disgust' ? '#c8d65a' : '#ffffff';
-			this.events.push( { type: 'say', text: pick( SAY[ type ] ), pos: p.pos.clone().setY( p.pos.y + 2.0 ), color } );
+	}
 
-		}
+	// 한꺼번에 너무 많은 목소리가 겹치지 않도록
+	say( p, type ) {
 
-		if ( p.bike && this.listener && this.listener.distanceTo( p.pos ) < 25 ) {
-
-			this.sound.bell( this.listener.distanceTo( p.pos ) );
-			this.events.push( { type: 'say', text: pick( SAY.bell ), pos: p.pos.clone().setY( p.pos.y + 2.0 ), color: '#9fe3ff' } );
-
-		}
+		if ( ! this.listener ) return;
+		const d = this.listener.distanceTo( p.pos );
+		if ( d > 60 || this.voiceTimer > 0.6 ) return;
+		this.voiceTimer += 0.2;
+		const female = p.sex === 'female';
+		if ( type === 'scream' ) this.sound.scream( d, female );
+		else this.sound.voice( type, d, female, p.personality );
 
 	}
 
@@ -595,6 +508,8 @@ export class People {
 	update( dt, me, fart, camera ) {
 
 		this.listener = camera.position;
+		this.voiceTimer = Math.max( 0, this.voiceTimer - dt );
+		this.frame ++;
 
 		// 방구가 지나간 자리에 냄새 구름을 남긴다
 		this.puffTimer -= dt;
@@ -623,9 +538,13 @@ export class People {
 		for ( let i = 0; i < this.list.length; i ++ ) {
 
 			const p = this.list[ i ];
-			this.updatePerson( p, dt, me, mePos, fart, force, flying );
 
+			// 멀리 있는 사람은 자세를 3 프레임에 한 번만 계산한다
 			const far = p.pos.distanceTo( camera.position );
+			p.animAcc += dt;
+			const animate = far < 260 && ( far < 60 || ( this.frame + i ) % 3 === 0 );
+			this.updatePerson( p, dt, me, mePos, fart, force, flying, animate );
+
 			p.setDetail( far < 45 );
 			p.group.visible = far < 260;
 			if ( p.bike ) p.bike.group.visible = p.group.visible;
@@ -645,7 +564,7 @@ export class People {
 
 	}
 
-	updatePerson( p, dt, me, mePos, fart, force, flying ) {
+	updatePerson( p, dt, me, mePos, fart, force, flying, animate ) {
 
 		p.time += dt;
 		p.stateTime += dt;
@@ -656,8 +575,8 @@ export class People {
 		const smell = p.state === 'fly' ? 0 : this.smellAt( p.pos, me, fart );
 		let move = 0;
 
-		// 방구 바람: 원뿔 안에 있으면 날아간다
-		if ( fart.active && p.state !== 'fly' ) {
+		// 방구 바람: 원뿔 안에 있으면 날아간다 (이륙선보다 센 방구일 때만)
+		if ( fart.active && p.state !== 'fly' && fart.physics.force >= LIFTOFF_FORCE ) {
 
 			const rel = p.pos.clone().sub( me.jetOrigin );
 			const d = rel.length();
@@ -841,7 +760,7 @@ export class People {
 					}
 
 					p.angry = 4;
-					this.events.push( { type: 'say', text: pick( SAY.angry ), pos: p.pos.clone().setY( p.pos.y + 2.0 ), color: '#ff8a80' } );
+					this.say( p, 'angry' );
 					p.state = 'return';
 					p.stateTime = 0;
 
@@ -895,9 +814,16 @@ export class People {
 
 		if ( p.angry > 0 ) p.angry -= dt;
 
-		this.pose( p, dt, toMe, move );
+		if ( p.bike ) p.bike.roll( move );
 
-		if ( p.bike ) this.updateBike( p, dt, move );
+		if ( animate ) {
+
+			this.pose( p, p.animAcc, toMe );
+			p.animAcc = 0;
+
+		}
+
+		if ( p.bike ) this.updateBike( p, dt );
 
 	}
 
@@ -917,7 +843,7 @@ export class People {
 
 	}
 
-	updateBike( p, dt, move ) {
+	updateBike( p, dt ) {
 
 		const b = p.bike;
 
@@ -950,7 +876,6 @@ export class People {
 			// 놀라면 핸들이 흔들린다
 			const wobble = p.state === 'react' ? Math.sin( p.time * 11 ) * 0.12 : 0;
 			b.group.rotation.set( 0, p.yaw, wobble );
-			b.roll( move );
 
 		} else if ( p.state === 'return' ) {
 
@@ -963,33 +888,24 @@ export class People {
 	}
 
 	// ------------------------------------------------------------------
-	// 포즈와 표정
+	// 포즈와 표정: 걷기는 Soldier 애니메이션, 반응은 팔·고개만 그 위에 덮는다
 
-	pose( p, dt, toMe, move ) {
+	pose( p, dt, toMe ) {
 
 		const t = p.time;
-		const rig = p.rig;
-		let P;
+		const solver = this.soldier.solver;
+		const body = p.body;
+		const P = walkPose( t, 0, 0 );
 		const expr = p.expr;
 		for ( const k in expr ) expr[ k ] = 0;
 		expr.smile = p.mood;
 
 		// 수다
-		if ( p.chatty && Math.sin( t * 0.4 + p.personality * 10 ) > 0.3 ) expr.talk = 1;
+		if ( p.chatty && Math.sin( t * 0.4 + p.personality * 10 ) > 0.3 ) expr.talk = 0.7;
 
 		const riding = p.bike && ! p.bike.flying && ( p.state === 'ride' || p.state === 'flee' || p.state === 'react' );
-
-		if ( p.state === 'walk' || p.state === 'flee' || p.state === 'return' || p.state === 'idle' || ( p.state === 'react' && ! riding ) ) {
-
-			p.phase = advancePhase( p.phase, p.speed, dt );
-			P = walkPose( t, p.speed, p.phase );
-
-		} else {
-
-			P = walkPose( t, 0, 0 );
-
-		}
-
+		const full = riding || p.state === 'fly' || p.state === 'down' || p.state === 'getup';
+		const target = { ...NONE };
 		const rel = THREE.MathUtils.clamp( angleTo( toMe - p.yaw ), - 1.2, 1.2 );
 
 		if ( p.state === 'idle' ) {
@@ -1001,11 +917,14 @@ export class People {
 				P.R_hand.set( 0.3, 0, 0.4 );
 				P.neck.x = 0.25;
 				P.head.x = 0.35;
-				expr.smile = 0.3;
+				expr.smile = 0.2;
+				target.armR = 1;
+				target.head = 1;
 
 			} else {
 
 				P.head.y = Math.sin( t * 0.7 ) * 0.7;
+				target.head = 1;
 
 			}
 
@@ -1014,18 +933,20 @@ export class People {
 		if ( p.state === 'flee' ) {
 
 			const scaredFace = p.react && p.react.type === 'scared';
-			expr.browUp = scaredFace ? 1 : 0.2;
-			expr.frown = scaredFace ? 0 : 0.8;
-			expr.sneer = scaredFace ? 0 : 0.8;
-			expr.jawOpen = scaredFace ? 0.7 : 0.1;
-			expr.squint = scaredFace ? 0 : 0.6;
-			expr.wide = scaredFace ? 1 : 0;
+			expr.browUp = scaredFace ? 0.8 : 0.1;
+			expr.frown = scaredFace ? 0 : 0.6;
+			expr.sneer = scaredFace ? 0 : 0.6;
+			expr.jawOpen = scaredFace ? 0.45 : 0.05;
+			expr.squint = scaredFace ? 0 : 0.5;
+			expr.wide = scaredFace ? 0.8 : 0;
 			expr.smile = 0;
-			if ( ! scaredFace ) {
+
+			if ( ! scaredFace && ! riding ) {
 
 				// 코를 막고 도망
 				P.R_upperArm = limb( 0.8, - 0.3, - 1 );
 				P.R_forearm = limb( 2.75, - 0.95, - 1 );
+				target.armR = 1;
 
 			}
 
@@ -1040,6 +961,9 @@ export class People {
 
 				P.head.y = rel * 0.5;
 				P.neck.y = rel * 0.3;
+				target.head = 1;
+				target.armL = target.armR = 1;
+				target.spine = 0.7;
 
 			}
 
@@ -1056,10 +980,10 @@ export class People {
 
 				}
 
-				expr.frown = 0.85;
-				expr.sneer = 1;
-				expr.squint = 0.7;
-				expr.jawOpen = 0.12;
+				expr.frown = 0.6;
+				expr.sneer = 0.75;
+				expr.squint = 0.55;
+				expr.jawOpen = 0.08;
 				expr.smile = 0;
 
 			} else if ( type === 'laugh' ) {
@@ -1070,14 +994,13 @@ export class People {
 					P.L_forearm = lerpV( P.L_forearm, limb( 1.5, 0.05, 1 ), k );
 					P.R_upperArm = lerpV( P.R_upperArm, limb( 0.35, 0.22, - 1 ), k );
 					P.R_forearm = lerpV( P.R_forearm, limb( 1.7, - 0.95, - 1 ), k );
-					P.spine.x += ( 0.12 + Math.sin( t * 13 ) * 0.08 ) * k;
-					P.hipsOffset.y -= Math.abs( Math.sin( t * 13 ) ) * 0.02;
+					P.spine.x += ( 0.12 + Math.sin( t * 13 ) * 0.06 ) * k;
 
 				}
 
-				expr.smile = 1;
-				expr.jawOpen = 0.35 + Math.abs( Math.sin( t * 13 ) ) * 0.4;
-				expr.squint = 0.8;
+				expr.smile = 0.85;
+				expr.jawOpen = 0.2 + Math.abs( Math.sin( t * 12 ) ) * 0.28;
+				expr.squint = 0.6;
 
 			} else if ( type === 'scared' ) {
 
@@ -1091,14 +1014,13 @@ export class People {
 					}
 
 					P.spine.x -= 0.14 * k;
-					P.hipsOffset.z -= 0.04 * k;
 
 				}
 
-				expr.browUp = 1;
-				expr.jawOpen = 0.85;
-				expr.wide = 1;
-				expr.sad = 0.3;
+				expr.browUp = 0.85;
+				expr.jawOpen = 0.55;
+				expr.wide = 0.8;
+				expr.sad = 0.2;
 				expr.smile = 0;
 
 			} else if ( type === 'lookup' ) {
@@ -1109,12 +1031,13 @@ export class People {
 					P.L_forearm = lerpV( P.L_forearm, limb( 2.85, 0.2, 1 ), k );
 					P.neck.x = - 0.35 * k;
 					P.head.x = - 0.45 * k;
+					target.armR = 0;
 
 				}
 
-				expr.browUp = 0.9;
-				expr.jawOpen = 0.55;
-				expr.wide = 0.7;
+				expr.browUp = 0.7;
+				expr.jawOpen = 0.35;
+				expr.wide = 0.5;
 				expr.smile = 0;
 
 			}
@@ -1123,8 +1046,8 @@ export class People {
 
 		if ( p.angry > 0 && p.state !== 'react' ) {
 
-			expr.frown = 1;
-			expr.sneer = 0.35;
+			expr.frown = 0.8;
+			expr.sneer = 0.25;
 			expr.talk = 1;
 			expr.smile = 0;
 
@@ -1145,7 +1068,7 @@ export class People {
 			}
 
 			expr.browUp = 1;
-			expr.jawOpen = 1;
+			expr.jawOpen = 0.9;
 			expr.wide = 1;
 			expr.smile = 0;
 
@@ -1156,7 +1079,7 @@ export class People {
 
 		if ( downT > 0 ) {
 
-			P.hipsOffset.y = THREE.MathUtils.lerp( P.hipsOffset.y, - 0.82, downT );
+			P.hipsOffset.y = THREE.MathUtils.lerp( P.hipsOffset.y, 0.14 - solver.hipsRest.y, downT );
 			P.hips.x = THREE.MathUtils.lerp( P.hips.x, - Math.PI / 2 + 0.05, downT );
 			P.neck.x = THREE.MathUtils.lerp( P.neck.x, 0.25, downT );
 			_q.setFromEuler( _e.set( P.hips.x, 0, 0 ) );
@@ -1172,33 +1095,31 @@ export class People {
 			}
 
 			expr.closed = p.state === 'down' && p.stateTime > 0.4 ? 1 : 0;
-			expr.sad = 0.7;
-			expr.frown = 0.4;
+			expr.sad = 0.6;
+			expr.frown = 0.3;
 			expr.smile = 0;
 
 		}
 
 		// ---- 자전거 타기: 엉덩이는 안장, 발은 페달, 손은 핸들 (IK)
-		let r;
-
 		if ( riding ) {
 
 			const s = 1 / p.scale;
-			P.hipsOffset.copy( BIKE.seat ).multiplyScalar( s ).add( _v.set( 0, 0.07 * s, - 0.03 * s ) ).sub( rig.hipsRest );
+			P.hipsOffset.copy( BIKE.seat ).multiplyScalar( s ).add( _v.set( 0, 0.07 * s, - 0.03 * s ) ).sub( solver.hipsRest );
 			P.hips.set( 0.38, 0, 0 );
 			P.spine.set( 0.22, 0, 0 );
 			P.chest.set( 0.12, 0, 0 );
 			P.neck.x = - 0.42;
 			P.head.x = - 0.25 + ( P.head.x || 0 );
 			P.legFrame.identity();
-			const r1 = rig.solve( P );
+			const r1 = solver.solve( P );
 
 			const b = p.bike;
 			for ( const [ side, sgn, off ] of [ [ 'L', 1, 0 ], [ 'R', - 1, Math.PI ] ] ) {
 
 				const a = b.angle + off;
 				const pedal = _v.set( sgn * 0.13, BIKE.bb.y - Math.cos( a ) * BIKE.crank + 0.07, BIKE.bb.z - Math.sin( a ) * BIKE.crank - 0.03 ).multiplyScalar( s );
-				const leg = legIK( r1.pos[ side + '_thigh' ], pedal, _v2.set( sgn * 0.15, 0.3, 1 ).normalize() );
+				const leg = solver.legIK( r1.pos[ side + '_thigh' ], pedal, _v2.set( sgn * 0.15, 0.3, 1 ).normalize() );
 				P[ side + '_thigh' ] = leg.thigh;
 				P[ side + '_shin' ] = leg.shin;
 				P[ side + '_foot' ] = new THREE.Vector3( sgn * 0.1, - 0.25, 1 ).normalize();
@@ -1213,27 +1134,46 @@ export class People {
 				}
 
 				const grip = _v3.set( sgn * 0.25, BIKE.bar.y, BIKE.bar.z - 0.07 ).multiplyScalar( s );
-				const arm = armIK( r1.pos[ side + '_upperArm' ], grip, _v2.set( sgn * 0.7, - 0.6, - 0.3 ).normalize() );
+				const arm = solver.armIK( r1.pos[ side + '_upperArm' ], grip, _v2.set( sgn * 0.7, - 0.6, - 0.3 ).normalize() );
 				P[ side + '_upperArm' ] = arm.upper;
 				P[ side + '_forearm' ] = arm.fore;
 
 			}
 
 			P.armWorld = true;
-			r = rig.solve( P );
-
-		} else {
-
-			r = rig.solve( P );
 
 		}
 
-		// 발 붙이기
-		const grounded = ( p.state !== 'fly' && ! riding && downT === 0 ) ? 1 : 0;
-		const lowest = Math.min( r.footL, r.footR );
-		p.groundOffset = THREE.MathUtils.lerp( p.groundOffset, - lowest * grounded, Math.min( 1, dt * 18 ) );
-		if ( ! grounded ) p.groundOffset *= Math.max( 0, 1 - dt * 8 );
-		rig.bones.hips.position.y += p.groundOffset;
+		// 애니메이션 (자전거·날기·쓰러짐 중에는 서 있는 손가락만 쓴다)
+		body.locomote( dt, full ? 0 : p.speed );
+
+		// 부위별 섞는 비율을 부드럽게 바꾼다
+		const k = Math.min( 1, dt * 7 );
+		let any = 0;
+
+		for ( const g in p.weights ) {
+
+			const goal = full ? 1 : target[ g ];
+			p.weights[ g ] += ( goal - p.weights[ g ] ) * ( full ? 1 : k );
+			any = Math.max( any, p.weights[ g ] );
+
+		}
+
+		if ( any > 0.01 ) {
+
+			const r = solver.solve( P );
+
+			// 쓰러졌다 일어날 때만 발을 땅에 맞춘다
+			if ( downT > 0 ) {
+
+				const lowest = Math.min( r.footL, r.footR );
+				p.groundOffset = THREE.MathUtils.lerp( p.groundOffset, - lowest * ( 1 - downT ), Math.min( 1, dt * 18 ) );
+
+			} else p.groundOffset = 0;
+
+			body.apply( r, full ? ALL : p.weights, p.groundOffset );
+
+		}
 
 		// 몸 방향
 		_q.setFromAxisAngle( _up, p.yaw );
