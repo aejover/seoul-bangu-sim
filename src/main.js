@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { pass, fog, pmremTexture, positionWorld, cameraPosition, uniform, vec3, select, abs, exp, max, saturation } from 'three/tsl';
+import { pass, fog, pmremTexture, positionWorld, cameraPosition, uniform, vec2, vec3, select, abs, exp, max, saturation, screenUV, screenSize } from 'three/tsl';
 
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
@@ -10,7 +10,7 @@ import { MeshletDrawingPipeline } from 'three/addons/pipelines/MeshletDrawingPip
 import { World } from './world.js';
 import { Character } from './character.js';
 import { Traffic } from './traffic.js';
-import { FartSystem, fartPhysics, LIFTOFF_DIAMETER, LIFTOFF_FORCE } from './fart.js';
+import { FartSystem, fartPhysics, LIFTOFF_DIAMETER, LIFTOFF_FORCE, LIGHT_LAUNCH_FORCE } from './fart.js';
 import { Sound } from './audio.js';
 import { People } from './people.js';
 import { Destruction } from './destruction.js';
@@ -152,8 +152,15 @@ async function init() {
 	const colorNode = scenePass.getTextureNode();
 	const bloomPass = bloom( colorNode, 0.09, 0.25, 0.0 );
 	bloomPass.setResolutionScale( 0.25 );
-	// 채도 10% 올려 화면을 선명하게
-	renderPipeline.outputNode = saturation( colorNode.add( bloomPass ), 1.1 );
+	// 선명하게: 이웃 픽셀과의 차이를 키우는 샤프닝 (언샤프 마스크) + 채도 10% 올림
+	const texel = vec2( 1 ).div( screenSize );
+	const around = colorNode.sample( screenUV.add( vec2( texel.x, 0 ) ) )
+		.add( colorNode.sample( screenUV.sub( vec2( texel.x, 0 ) ) ) )
+		.add( colorNode.sample( screenUV.add( vec2( 0, texel.y ) ) ) )
+		.add( colorNode.sample( screenUV.sub( vec2( 0, texel.y ) ) ) );
+	const sharpness = 0.35;
+	const sharpened = max( colorNode.mul( 1 + 4 * sharpness ).sub( around.mul( sharpness ) ), 0 );
+	renderPipeline.outputNode = saturation( sharpened.add( bloomPass ), 1.1 );
 
 	// ---- 나
 	setLoading( '내 몸에 관절 넣는 중...' );
@@ -368,7 +375,8 @@ function updateSun() {
 	const sinElevation = Math.sin( THREE.MathUtils.degToRad( elevation ) );
 	const transmittance = Math.sqrt( Math.max( sinElevation, 0 ) );
 	sunLight.color.set( 0xffb072 ).lerp( new THREE.Color( 0xfff4e8 ), transmittance );
-	sunLight.intensity = 100 * transmittance;
+	// 한낮 햇빛은 너무 눈부시지 않게 (해질녘 노을빛은 그대로)
+	sunLight.intensity = 100 * transmittance * ( 1 - 0.38 * transmittance );
 	sunLight.position.copy( sun ).multiplyScalar( 4000 );
 
 	const shadowCamera = sunLight.shadow.camera;
@@ -410,7 +418,7 @@ function updateSun() {
 	nightness.value = THREE.MathUtils.clamp( night, 0, 1 );
 	moonLight.intensity = nightness.value * 5;
 	scene.environmentIntensity = 0.2 + nightness.value * 0.25;
-	renderer.toneMappingExposure = THREE.MathUtils.lerp( 0.13, 0.32, Math.max( 0, ( t - 18 ) / 1.5 ) );
+	renderer.toneMappingExposure = THREE.MathUtils.lerp( 0.13 - 0.025 * transmittance, 0.32, Math.max( 0, ( t - 18 ) / 1.5 ) );
 	if ( signs ) signs.glow.value = THREE.MathUtils.lerp( 4.5, 11, nightness.value );
 	if ( traffic ) traffic.lightLevel.value = nightness.value;
 
@@ -705,7 +713,9 @@ function setupInput() {
 
 		if ( e.code === 'KeyR' && ! e.repeat ) returnHome();
 
-		if ( [ 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown' ].includes( e.code ) ) e.preventDefault();
+		if ( [ 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight' ].includes( e.code ) ) e.preventDefault();
+		// 드론에서 Ctrl 은 아래로 (Ctrl+S 저장, Ctrl+D 북마크 같은 브라우저 단축키를 막는다)
+		if ( director.mode === 'drone' && e.ctrlKey && [ 'KeyS', 'KeyD', 'KeyA' ].includes( e.code ) ) e.preventDefault();
 
 	} );
 
@@ -786,14 +796,19 @@ function gatherInput() {
 	const f = clamp( ( keys.KeyW || keys.ArrowUp ? 1 : 0 ) - ( keys.KeyS || keys.ArrowDown ? 1 : 0 ) - stick.y );
 	const r = clamp( ( keys.KeyD || keys.ArrowRight ? 1 : 0 ) - ( keys.KeyA || keys.ArrowLeft ? 1 : 0 ) + stick.x );
 
-	// 드론 시점: 이동 키는 드론이 쓰고 나는 제자리 (방구는 그대로 뀔 수 있다)
+	// 드론 시점: WASD·Shift·Ctrl 는 드론, 방향키는 나 (찍으면서 걷고 방구도 뀔 수 있다)
 	if ( director.mode === 'drone' ) {
 
-		droneInput.forward = f;
-		droneInput.right = r;
-		droneInput.up = ( keys.KeyE || keys.PageUp ? 1 : 0 ) - ( keys.KeyQ || keys.PageDown ? 1 : 0 );
-		droneInput.fast = keys.ShiftLeft || keys.ShiftRight || Math.hypot( stick.x, stick.y ) > 0.9;
-		return { move: new THREE.Vector3(), run: false, forward: 0, turn: 0 };
+		droneInput.forward = clamp( ( keys.KeyW ? 1 : 0 ) - ( keys.KeyS ? 1 : 0 ) - stick.y );
+		droneInput.right = clamp( ( keys.KeyD ? 1 : 0 ) - ( keys.KeyA ? 1 : 0 ) + stick.x );
+		droneInput.up = ( keys.ShiftLeft || keys.ShiftRight ? 1 : 0 ) - ( keys.ControlLeft || keys.ControlRight ? 1 : 0 );
+
+		const mf = ( keys.ArrowUp ? 1 : 0 ) - ( keys.ArrowDown ? 1 : 0 );
+		const mr = ( keys.ArrowRight ? 1 : 0 ) - ( keys.ArrowLeft ? 1 : 0 );
+		const yaw = director.drone.yaw;
+		const forward = new THREE.Vector3( Math.sin( yaw ), 0, Math.cos( yaw ) );
+		const right = new THREE.Vector3( - Math.cos( yaw ), 0, Math.sin( yaw ) );
+		return { move: forward.multiplyScalar( mf ).addScaledVector( right, mr ), run: false, forward: mf, turn: mr };
 
 	}
 
@@ -873,9 +888,10 @@ function animate() {
 	traffic.update( dt, me, fart );
 	people.update( dt, me, fart, camera );
 
-	// 이륙선보다 센 방구만 나무와 빌딩을 날린다 (그 아래에서는 페라리만 날아간다)
+	// 충분히 센 방구는 가벼운 것(사람·나무·길가 물건)부터 날리고, 이륙선을 넘어야 빌딩까지 날린다
+	const light = fart.physics.force >= LIGHT_LAUNCH_FORCE;
 	const strong = fart.physics.force >= LIFTOFF_FORCE;
-	if ( fart.active && strong ) destruction.blast( dt, me.jetOrigin, fart.physics );
+	if ( fart.active && light ) destruction.blast( dt, me.jetOrigin, fart.physics, strong );
 	destruction.update( dt );
 
 	for ( const e of destruction.events ) {
@@ -914,7 +930,7 @@ function animate() {
 
 			traffic.shock( me.position, e.force, e.radius );
 			people.shock( me.position, e.force, e.radius );
-			if ( strong ) destruction.shock( me.position, e.force, e.radius );
+			if ( light ) destruction.shock( me.position, e.force, e.radius, strong );
 			directorEvents.push( 'shock' );
 
 		}
@@ -968,7 +984,19 @@ function animate() {
 	const delta = target.clone().sub( followTarget ).multiplyScalar( Math.min( 1, dt * ( flying || driving ? 6 : 10 ) ) );
 	followTarget.add( delta );
 
-	const directed = director.mode !== 'third' && director.update( { dt, me, people, traffic, fart, driving, events: directorEvents, drone: droneInput } );
+	// 카메라 연출에서 오류가 나도 화면이 멈추지 않게 3인칭으로 돌아간다
+	let directed = false;
+
+	try {
+
+		directed = director.mode !== 'third' && director.update( { dt, me, people, traffic, fart, driving, events: directorEvents, drone: droneInput } );
+
+	} catch ( error ) {
+
+		console.error( error );
+		setCameraMode( 'third' );
+
+	}
 
 	if ( directed ) {
 

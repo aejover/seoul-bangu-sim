@@ -38,8 +38,17 @@ export class Director {
 		this.tripod = new THREE.Vector3();
 		this.label = '';
 
-		// 드론: 내가 직접 날며 찍는 카메라
-		this.drone = { pos: new THREE.Vector3(), yaw: 0, pitch: - 0.2, vel: new THREE.Vector3() };
+		// 드론: 내가 직접 날며 찍는 카메라. 마우스로 고른 방향(목표)을 부드럽게 따라가서 손을 떼면 스르르 멈춘다
+		this.drone = { pos: new THREE.Vector3(), yaw: 0, pitch: - 0.2, goalYaw: 0, goalPitch: - 0.2, vel: new THREE.Vector3(), fov: 60, goalFov: 60, last: new THREE.Vector3() };
+
+		// 휠: 드론 확대 / 축소
+		dom.addEventListener( 'wheel', ( e ) => {
+
+			if ( this.mode !== 'drone' ) return;
+			e.preventDefault();
+			this.drone.goalFov = THREE.MathUtils.clamp( this.drone.goalFov * Math.exp( e.deltaY * 0.0012 ), 12, 95 );
+
+		}, { passive: false } );
 
 		// 1인칭·드론에서는 드래그로 둘러본다
 		let drag = null;
@@ -56,8 +65,10 @@ export class Director {
 
 			if ( this.mode === 'drone' ) {
 
-				this.drone.yaw -= dx * 0.004;
-				this.drone.pitch = THREE.MathUtils.clamp( this.drone.pitch - dy * 0.0035, - 1.45, 1.45 );
+				// 확대했을수록 천천히 돈다
+				const k = this.drone.fov / 60;
+				this.drone.goalYaw -= dx * 0.004 * k;
+				this.drone.goalPitch = THREE.MathUtils.clamp( this.drone.goalPitch - dy * 0.0035 * k, - 1.45, 1.45 );
 
 			} else {
 
@@ -84,10 +95,13 @@ export class Director {
 
 			const dir = new THREE.Vector3();
 			this.camera.getWorldDirection( dir );
-			this.drone.pos.copy( this.camera.position );
-			this.drone.yaw = Math.atan2( dir.x, dir.z );
-			this.drone.pitch = Math.asin( THREE.MathUtils.clamp( dir.y, - 1, 1 ) );
-			this.drone.vel.set( 0, 0, 0 );
+			const d = this.drone;
+			d.pos.copy( this.camera.position );
+			d.yaw = d.goalYaw = Math.atan2( dir.x, dir.z );
+			d.pitch = d.goalPitch = Math.asin( THREE.MathUtils.clamp( dir.y, - 1, 1 ) );
+			d.vel.set( 0, 0, 0 );
+			d.fov = d.goalFov = 60;
+			if ( ctx ) d.last.copy( ctx.me.position );
 
 		}
 
@@ -148,7 +162,7 @@ export class Director {
 
 			} else {
 
-				me.bones.head.getWorldPosition( _v2 );
+				me.headMount.getWorldPosition( _v2 );
 				pos = _v2.clone().add( _v.set( 0, 0.12, 0 ) ).addScaledVector( forward, 0.16 );
 				// 하늘을 날 땐 몸이 보는 쪽으로
 				if ( me.state === 'air' ) this.fpYaw += ( THREE.MathUtils.euclideanModulo( me.yaw - this.fpYaw + Math.PI, Math.PI * 2 ) - Math.PI ) * Math.min( 1, dt * 3 );
@@ -162,15 +176,25 @@ export class Director {
 
 		} else if ( this.mode === 'drone' ) {
 
-			// W/S 앞뒤, A/D 옆, E/Q 위아래, Shift 빠르게, 드래그로 고개
+			// W/S 앞뒤(높이는 그대로), A/D 옆, Shift 위, Ctrl 아래, 마우스 드래그로 방향, 휠로 확대
 			const d = this.drone, input = ctx.drone;
+			const ease = 1 - Math.exp( - dt * 9 );
+			d.yaw += ( d.goalYaw - d.yaw ) * ease;
+			d.pitch += ( d.goalPitch - d.pitch ) * ease;
+			d.fov += ( d.goalFov - d.fov ) * ease;
+
 			const c = Math.cos( d.pitch );
 			const look = new THREE.Vector3( Math.sin( d.yaw ) * c, Math.sin( d.pitch ), Math.cos( d.yaw ) * c );
+			const flat = new THREE.Vector3( Math.sin( d.yaw ), 0, Math.cos( d.yaw ) );
 			const right = new THREE.Vector3( - Math.cos( d.yaw ), 0, Math.sin( d.yaw ) );
-			const speed = input.fast ? 40 : 12;
-			const want = look.clone().multiplyScalar( input.forward * speed ).addScaledVector( right, input.right * speed ).add( _v.set( 0, input.up * speed * 0.7, 0 ) );
-			d.vel.lerp( want, Math.min( 1, dt * 3 ) );
+			const speed = 14;
+			const want = flat.multiplyScalar( input.forward * speed ).addScaledVector( right, input.right * speed ).add( _v.set( 0, input.up * speed * 0.6, 0 ) );
+			d.vel.lerp( want, Math.min( 1, dt * 4 ) );
 			d.pos.addScaledVector( d.vel, dt );
+
+			// 내가 움직이면 드론도 같이 따라온다 (찍으면서 놀 수 있게)
+			d.pos.add( _v.subVectors( me.position, d.last ) );
+			d.last.copy( me.position );
 
 			// 건물과 땅을 뚫지 않게
 			const floor = this.world.heightAt( d.pos.x, d.pos.z ) + 0.6;
@@ -179,7 +203,7 @@ export class Director {
 
 			pos = d.pos.clone();
 			target = d.pos.clone().add( look );
-			fov = 60;
+			fov = d.fov;
 			smooth = 0;
 
 		} else if ( this.mode === 'people' ) {
@@ -247,7 +271,7 @@ export class Director {
 	faceShot( p, dist = 1.4 ) {
 
 		const head = new THREE.Vector3();
-		p.rig.bones.head.getWorldPosition( head );
+		p.face.group.getWorldPosition( head );
 		head.y += 0.1;
 		const f = new THREE.Vector3( Math.sin( p.yaw ), 0, Math.cos( p.yaw ) );
 

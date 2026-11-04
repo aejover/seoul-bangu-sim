@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { walkPose, limb, lerpV, blobShadowTexture } from './rig.js';
 import { FaceKit, Face, HAIR_STYLES, SKIN_TONES } from './face.js';
 import { loadSoldier, SoldierBody, dressedGeometry, addProps, OUTFITS, ALL } from './soldier.js';
-import { LIFTOFF_FORCE } from './fart.js';
+import { LIGHT_LAUNCH_FORCE } from './fart.js';
 
 // 서울 인도를 걷는 사람들과 자전거 타는 사람들.
 // 몸은 Soldier (걷기·달리기 애니메이션) + 사진 속 옷차림, 얼굴은 Lee Perry-Smith 스캔. 내 방구에 반응한다.
@@ -421,7 +421,7 @@ export class People {
 	shock( center, force, radius ) {
 
 		// 이륙선(내 몸이 뜨는 세기) 아래에서는 사람은 날아가지 않고 놀라기만 한다
-		const canLaunch = force >= LIFTOFF_FORCE;
+		const canLaunch = force >= LIGHT_LAUNCH_FORCE; // '뿌와아앙' 이상
 
 		for ( const p of this.list ) {
 
@@ -430,7 +430,7 @@ export class People {
 			const d = rel.length();
 			if ( d > radius ) continue;
 			const strength = force * ( 1 - d / radius );
-			if ( canLaunch && strength > 70 ) this.launch( p, rel.setY( 0 ).normalize(), strength );
+			if ( canLaunch && strength > 90 ) this.launch( p, rel.setY( 0 ).normalize(), strength );
 			else this.startReact( p, 'scared', 1 );
 
 		}
@@ -576,7 +576,7 @@ export class People {
 		let move = 0;
 
 		// 방구 바람: 원뿔 안에 있으면 날아간다 (이륙선보다 센 방구일 때만)
-		if ( fart.active && p.state !== 'fly' && fart.physics.force >= LIFTOFF_FORCE ) {
+		if ( fart.active && p.state !== 'fly' && fart.physics.force >= LIGHT_LAUNCH_FORCE ) {
 
 			const rel = p.pos.clone().sub( me.jetOrigin );
 			const d = rel.length();
@@ -624,7 +624,8 @@ export class People {
 
 					if ( smell > 0.02 ) {
 
-						const type = force > 450 ? 'scared' : p.personality < 0.35 ? 'laugh' : p.personality < 0.8 ? 'disgust' : 'scared';
+						// 약한 방구는 대부분 "으악 냄새" (코 막고 인상), 가끔 웃음. 센 방구는 겁먹는다
+						const type = force >= LIGHT_LAUNCH_FORCE ? ( p.personality < 0.25 ? 'laugh' : 'scared' ) : p.personality < 0.2 ? 'laugh' : 'disgust';
 						this.startReact( p, type, smell );
 						p.cool = 4 + Math.random() * 3;
 

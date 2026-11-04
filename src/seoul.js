@@ -390,7 +390,8 @@ export function buildSigns( world, spawn, radius = 340 ) {
 			for ( let k = 0; k < count; k ++ ) {
 
 				const along = - f.len / 2 + slot * ( k + 0.5 );
-				const w = Math.min( 7, slot * 0.86 );
+				// 간판은 너무 크지 않게 (가게 폭의 60 %, 최대 4.6 m)
+				const w = Math.min( 4.6, slot * 0.6 );
 				const h = w / 4;
 				const center = f.c.clone().addScaledVector( right, along ).addScaledVector( f.n, 0.3 );
 				center.y = curb + 3.25 + h / 2;
@@ -411,13 +412,13 @@ export function buildSigns( world, spawn, radius = 340 ) {
 			// 2·3층 간판 (학원, 병원...)
 			for ( const floorY of [ 7.0, 10.4 ] ) {
 
-				if ( random() > 0.55 ) continue;
+				if ( random() > 0.3 ) continue;
 
 				for ( let k = 0; k < count; k ++ ) {
 
-					if ( random() < 0.3 ) continue;
+					if ( random() < 0.55 ) continue;
 					const along = - f.len / 2 + slot * ( k + 0.5 );
-					const w = Math.min( 5.2, slot * 0.7 );
+					const w = Math.min( 3.6, slot * 0.5 );
 					const h = w / 4;
 					const center = f.c.clone().addScaledVector( right, along ).addScaledVector( f.n, 0.12 );
 					center.y = curb + floorY + h / 2;
@@ -430,9 +431,9 @@ export function buildSigns( world, spawn, radius = 340 ) {
 			// 건물 모서리의 세로 돌출 간판
 			for ( const end of [ - 1, 1 ] ) {
 
-				if ( random() > 0.45 ) continue;
+				if ( random() > 0.22 ) continue;
 				const along = end * ( f.len / 2 - 1.4 );
-				const hw = 0.5, hh = 2.1;
+				const hw = 0.38, hh = 1.5;
 				const center = f.c.clone().addScaledVector( right, along ).addScaledVector( f.n, 0.3 + hw );
 				center.y = curb + 5.8 + hh + random() * 4;
 				const cell = cells.v[ Math.floor( random() * cells.v.length ) ];

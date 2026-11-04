@@ -95,6 +95,7 @@ export class Character {
 		this.group.add( this.body.root );
 		const J = kit.joints;
 		const headMount = this.body.attach( 'Head', J.head );
+		this.headMount = headMount; // 1인칭 카메라 자리
 		this.hipsMount = this.body.attach( 'Hips', J.hips );
 
 		// 네모 얼굴 머리

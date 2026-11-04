@@ -35,6 +35,10 @@ export function fartPhysics( diameterMM ) {
 
 // 몸무게를 들어 올리는 지름 (추력의 세로 성분 0.8 F 가 체중을 넘는 지점)
 export const LIFTOFF_FORCE = BODY_MASS * G / 0.8;
+
+// 사람·나무·길가 물건이 날아가기 시작하는 세기 ('뿌와아앙' 등급, 지름 약 45 mm).
+// 그보다 약한 방구는 냄새에 놀라는 반응만 한다. 페라리는 더 무거워서 더 세야 날아간다
+export const LIGHT_LAUNCH_FORCE = 250;
 export const LIFTOFF_DIAMETER = Math.sqrt( LIFTOFF_FORCE / ( 2 * PRESSURE ) * 4 / Math.PI ) * 1000;
 
 // ---------------------------------------------------------------------------

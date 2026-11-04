@@ -512,7 +512,8 @@ export class Traffic {
 
 			const strength = p.force * ( 1 - dist / reach );
 
-			if ( strength > 160 ) {
+			// 페라리는 사람·물건보다 무거워서 더 센 방구여야 날아간다
+			if ( strength > 300 ) {
 
 				const push = rel.clone().setY( 0 ).normalize();
 				if ( inCone ) push.lerp( new THREE.Vector3( dir.x, 0, dir.z ).normalize(), 0.6 ).normalize();
@@ -554,7 +555,7 @@ export class Traffic {
 			if ( dist > radius ) continue;
 			const strength = force * ( 1 - dist / radius ) * 0.8;
 
-			if ( strength > 200 ) {
+			if ( strength > 330 ) {
 
 				this.launch( car, rel.setY( 0 ).normalize(), strength );
 				launched ++;
