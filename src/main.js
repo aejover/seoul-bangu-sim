@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { pass, fog, pmremTexture, positionWorld, cameraPosition, uniform, vec2, vec3, select, abs, exp, max, saturation, screenUV, screenSize } from 'three/tsl';
+import { pass, fog, pmremTexture, positionWorld, cameraPosition, uniform, vec3, select, abs, exp, max } from 'three/tsl';
 
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js';
@@ -152,15 +152,7 @@ async function init() {
 	const colorNode = scenePass.getTextureNode();
 	const bloomPass = bloom( colorNode, 0.09, 0.25, 0.0 );
 	bloomPass.setResolutionScale( 0.25 );
-	// 선명하게: 이웃 픽셀과의 차이를 키우는 샤프닝 (언샤프 마스크) + 채도 10% 올림
-	const texel = vec2( 1 ).div( screenSize );
-	const around = colorNode.sample( screenUV.add( vec2( texel.x, 0 ) ) )
-		.add( colorNode.sample( screenUV.sub( vec2( texel.x, 0 ) ) ) )
-		.add( colorNode.sample( screenUV.add( vec2( 0, texel.y ) ) ) )
-		.add( colorNode.sample( screenUV.sub( vec2( 0, texel.y ) ) ) );
-	const sharpness = 0.35;
-	const sharpened = max( colorNode.mul( 1 + 4 * sharpness ).sub( around.mul( sharpness ) ), 0 );
-	renderPipeline.outputNode = saturation( sharpened.add( bloomPass ), 1.1 );
+	renderPipeline.outputNode = colorNode.add( bloomPass );
 
 	// ---- 나
 	setLoading( '내 몸에 관절 넣는 중...' );
