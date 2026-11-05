@@ -1,7 +1,7 @@
 /* 간판용 둥근 글꼴 (카페24 써라운드) */
 @font-face {
 	font-family: "Cafe24Ssurround";
-	src: url("https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts_2105_2@1.0/Cafe24Ssurround.woff") format("woff");
+	src: url("assets/fonts/Cafe24Ssurround.woff") format("woff");
 	font-weight: normal;
 	font-display: swap;
 }
@@ -192,6 +192,15 @@ label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
 .face i:last-child { right: 19%; }
 
 @keyframes bob { to { transform: translateY(-8px) rotate(4deg); } }
+
+/* 녹화 모드: 시뮬레이션 화면만 남긴다 */
+body.recording #title, body.recording #panel, body.recording #help, body.recording #flight,
+body.recording #carButton, body.recording #stick { display: none !important; }
+body.recording::before, body.recording::after { height: 0 !important; }
+
+button.on { background: #c8d65a; border-color: #c8d65a; color: #1b0d06; }
+
+kbd { font: inherit; font-size: 10px; padding: 0 4px; border: 1px solid var(--line); border-radius: 4px; }
 
 /* 카메라 시점 */
 #cameraModes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px; }

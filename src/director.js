@@ -7,6 +7,7 @@ export const CAMERA_MODES = [
 	{ id: 'third', label: '3인칭' },
 	{ id: 'people', label: '사람들' },
 	{ id: 'drone', label: '드론 촬영' },
+	{ id: 'track', label: '자동 추적' },
 	{ id: 'city', label: '도시 전체' },
 	{ id: 'auto', label: '자동 연출' }
 ];
@@ -39,7 +40,8 @@ export class Director {
 		this.label = '';
 
 		// 드론: 내가 직접 날며 찍는 카메라. 마우스로 고른 방향(목표)을 부드럽게 따라가서 손을 떼면 스르르 멈춘다
-		this.drone = { pos: new THREE.Vector3(), yaw: 0, pitch: - 0.2, goalYaw: 0, goalPitch: - 0.2, vel: new THREE.Vector3(), fov: 60, goalFov: 60, last: new THREE.Vector3() };
+		this.drone = { pos: new THREE.Vector3(), yaw: 0, pitch: - 0.2, goalYaw: 0, goalPitch: - 0.2, vel: new THREE.Vector3(), fov: 60, goalFov: 60, last: new THREE.Vector3(), speed: 14 };
+		this.trackYaw = 0;
 
 		// 휠: 드론 확대 / 축소
 		dom.addEventListener( 'wheel', ( e ) => {
@@ -110,6 +112,7 @@ export class Director {
 		this.shot = null;
 		this.subject = null;
 		if ( mode === 'first' && ctx ) this.fpYaw = ctx.me.yaw;
+		if ( mode === 'track' && ctx ) this.trackYaw = ctx.me.yaw;
 
 	}
 
@@ -187,7 +190,7 @@ export class Director {
 			const look = new THREE.Vector3( Math.sin( d.yaw ) * c, Math.sin( d.pitch ), Math.cos( d.yaw ) * c );
 			const flat = new THREE.Vector3( Math.sin( d.yaw ), 0, Math.cos( d.yaw ) );
 			const right = new THREE.Vector3( - Math.cos( d.yaw ), 0, Math.sin( d.yaw ) );
-			const speed = 14;
+			const speed = d.speed;
 			const want = flat.multiplyScalar( input.forward * speed ).addScaledVector( right, input.right * speed ).add( _v.set( 0, input.up * speed * 0.6, 0 ) );
 			d.vel.lerp( want, Math.min( 1, dt * 4 ) );
 			d.pos.addScaledVector( d.vel, dt );
@@ -205,6 +208,21 @@ export class Director {
 			target = d.pos.clone().add( look );
 			fov = d.fov;
 			smooth = 0;
+
+		} else if ( this.mode === 'track' ) {
+
+			// 자동 추적 드론: 내 앞쪽 위에서 천천히 좌우로 돌고 오르내리며 나를 계속 찍는다
+			const t = this.time;
+			const heading = Math.atan2( forward.x, forward.z );
+			this.trackYaw += ( THREE.MathUtils.euclideanModulo( heading - this.trackYaw + Math.PI, Math.PI * 2 ) - Math.PI ) * Math.min( 1, dt * 0.8 );
+			const yaw = this.trackYaw + Math.sin( t * 0.23 ) * 0.75;
+			const air = me.state === 'air' ? 1 : 0;
+			const dist = ( ctx.driving ? 11 : 6.5 ) + 2.5 * ( 0.5 + 0.5 * Math.sin( t * 0.17 ) ) + air * 8;
+			const height = 2.8 + 7 * ( 0.5 + 0.5 * Math.sin( t * 0.11 + 1 ) ) + air * 5;
+			pos = me.position.clone().add( _v.set( Math.sin( yaw ) * dist, height, Math.cos( yaw ) * dist ) );
+			target = head.clone();
+			fov = 50;
+			smooth = 2.5;
 
 		} else if ( this.mode === 'people' ) {
 

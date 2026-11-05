@@ -904,73 +904,6 @@ function build63() {
 
 }
 
-function apartmentMaterial() {
-
-	// 흰 판상형 아파트: 층마다 창, 밤엔 무작위로 불이 켜진다
-	const m = new THREE.MeshStandardNodeMaterial( { roughness: 0.8 } );
-	const p = positionWorld;
-	const sideways = abs( normalWorld.x ).greaterThan( abs( normalWorld.z ) );
-	const bay = select( sideways, p.z, p.x );
-	const fy = fract( p.y.div( 2.8 ) );
-	const fb = fract( bay.div( 3.4 ) );
-	const isWindow = step( 0.32, fy ).mul( step( fy, 0.82 ) ).mul( step( 0.12, fb ) ).mul( step( fb, 0.88 ) ).mul( step( 3, p.y ) );
-	const roof = step( 0.5, normalWorld.y );
-	const wall = mix( color( 0xe7e2d6 ), color( 0xcfc9bb ), step( 0.5, fract( p.y.div( 28 ) ) ).mul( 0.3 ) );
-	const glass = color( 0x34404c );
-	m.colorNode = mix( mix( wall, glass, isWindow ), color( 0x7a7c80 ), roof );
-	const cell = floor( p.y.div( 2.8 ) ).mul( 131 ).add( floor( bay.div( 3.4 ) ) ).add( float( instanceIndex ).mul( 977 ) );
-	const lit = step( 0.42, hash( cell ) );
-	const warm = mix( color( 1.0, 0.78, 0.45 ), color( 0.85, 0.92, 1.0 ), step( 0.8, hash( cell.add( 7 ) ) ) );
-	m.emissiveNode = warm.mul( isWindow.mul( lit ).mul( roof.oneMinus() ) ).mul( nightness.mul( 3.5 ) );
-	return m;
-
-}
-
-function buildApartments( exclude ) {
-
-	const random = createRandom( 63 );
-	const matrices = [];
-	const q = new THREE.Quaternion();
-	const s = new THREE.Vector3();
-	const p = new THREE.Vector3();
-	const step = 150;
-
-	for ( let x = - 3300; x <= 3300; x += step ) {
-
-		for ( let z = - 3300; z <= 3300; z += step ) {
-
-			if ( exclude( x, z ) || random() < 0.2 ) continue;
-
-			const rows = 2 + Math.floor( random() * 3 );
-			const yaw = ( random() - 0.5 ) * 0.35;
-			q.setFromAxisAngle( new THREE.Vector3( 0, 1, 0 ), yaw );
-			const height = 42 + Math.floor( random() * 14 ) * 2.8;
-
-			for ( let r = 0; r < rows; r ++ ) {
-
-				const w = 48 + random() * 26;
-				const h = height + ( random() < 0.3 ? 8.4 : 0 );
-				const offset = new THREE.Vector3( ( random() - 0.5 ) * 30, 0, ( r - ( rows - 1 ) / 2 ) * 38 ).applyQuaternion( q );
-				const px = x + offset.x, pz = z + offset.z;
-				if ( exclude( px, pz ) ) continue;
-				p.set( px, h / 2 - 0.3, pz );
-				s.set( w, h, 13 );
-				matrices.push( new THREE.Matrix4().compose( p, q, s ) );
-
-			}
-
-		}
-
-	}
-
-	const mesh = new THREE.InstancedMesh( new THREE.BoxGeometry( 1, 1, 1 ), apartmentMaterial(), matrices.length );
-	matrices.forEach( ( m, i ) => mesh.setMatrixAt( i, m ) );
-	mesh.name = 'Apartments';
-	mesh.frustumCulled = false;
-	return mesh;
-
-}
-
 function buildMountains() {
 
 	const peaks = [
@@ -1010,107 +943,18 @@ function buildMountains() {
 
 }
 
-function buildRiver() {
-
-	const group = new THREE.Group();
-	group.name = 'HanRiver';
-
-	const water = new THREE.MeshStandardNodeMaterial( { metalness: 0.3, roughness: 0.08 } );
-	const ripple = mx_noise_float( positionWorld.mul( vec3( 0.02, 0, 0.05 ) ).add( vec3( time.mul( 0.05 ), 0, 0 ) ) );
-	water.colorNode = mix( color( 0x0d2a33 ), color( 0x1a4a55 ), ripple.mul( 0.5 ).add( 0.5 ) );
-	const river = new THREE.Mesh( new THREE.PlaneGeometry( 14000, 760 ).rotateX( - Math.PI / 2 ), water );
-	river.position.set( 0, - 0.12, 1260 );
-	group.add( river );
-
-	// 강변 둔치
-	const bank = new THREE.MeshStandardMaterial( { color: 0x4f6b3a, roughness: 0.95 } );
-	for ( const z of [ 860, 1660 ] ) {
-
-		const b = new THREE.Mesh( new THREE.PlaneGeometry( 14000, 60 ).rotateX( - Math.PI / 2 ), bank );
-		b.position.set( 0, - 0.08, z );
-		group.add( b );
-
-	}
-
-	// 다리들: 상판, 교각, 가로등
-	const concrete = new THREE.MeshStandardMaterial( { color: 0x9a9893, roughness: 0.7 } );
-	const steel = new THREE.MeshStandardMaterial( { color: 0x2f6fb5, roughness: 0.4, metalness: 0.6 } );
-	const lampMaterial = new THREE.MeshBasicNodeMaterial();
-	lampMaterial.colorNode = color( 1, 0.8, 0.5 ).mul( mix( 0.8, 30, nightness ) );
-	const lamps = [];
-	const piers = [];
-
-	for ( const [ x, arch ] of [ [ - 1100, true ], [ 150, false ], [ 1350, true ], [ 2700, false ] ] ) {
-
-		const deck = new THREE.Mesh( new THREE.BoxGeometry( 26, 2.4, 900 ), concrete );
-		deck.position.set( x, 14, 1260 );
-		group.add( deck );
-
-		for ( let z = 860; z <= 1660; z += 80 ) piers.push( new THREE.BoxGeometry( 5, 14, 9 ).translate( x, 7, z ) );
-		for ( let z = 820; z <= 1700; z += 40 ) {
-
-			lamps.push( new THREE.SphereGeometry( 0.7, 8, 6 ).translate( x - 12, 22, z ) );
-			lamps.push( new THREE.SphereGeometry( 0.7, 8, 6 ).translate( x + 12, 22, z ) );
-
-		}
-
-		if ( arch ) {
-
-			// 파란 아치 (한강 철교 느낌)
-			for ( const side of [ - 11, 11 ] ) {
-
-				for ( let k = 0; k < 3; k ++ ) {
-
-					const a = new THREE.Mesh( new THREE.TorusGeometry( 120, 1.4, 8, 48, Math.PI ), steel );
-					a.rotation.y = Math.PI / 2;
-					a.scale.set( 1, 0.35, 1 );
-					a.position.set( x + side, 15, 1020 + k * 240 );
-					group.add( a );
-
-				}
-
-			}
-
-		}
-
-	}
-
-	group.add( new THREE.Mesh( mergeGeometries( piers ), concrete ) );
-	group.add( new THREE.Mesh( mergeGeometries( lamps ), lampMaterial ) );
-
-	return group;
-
-}
-
 export function buildLandmarks( cityBounds ) {
 
 	const group = new THREE.Group();
 	group.name = 'SeoulSkyline';
 
-	// 도시 바깥 땅
-	const groundMaterial = new THREE.MeshStandardNodeMaterial( { roughness: 0.95 } );
-	const n = mx_fractal_noise_float( positionWorld.mul( 0.004 ), 3 ).mul( 0.5 ).add( 0.5 );
-	groundMaterial.colorNode = mix( color( 0x2a2c2f ), color( 0x3b4a33 ), smoothstep( 0.45, 0.7, n ) );
-	const ground = new THREE.Mesh( new THREE.PlaneGeometry( 16000, 16000 ).rotateX( - Math.PI / 2 ), groundMaterial );
-	ground.position.y = - 0.3;
-	group.add( ground );
-
+	// 도시 바깥의 상자 아파트·얼룩진 땅·한강 평면은 엉성하게 보여서 뺐다 (저사양에서도 가볍게).
+	// 멀리 보이는 남산·롯데타워·63빌딩·산만 남긴다
 	const namsan = buildNamsan();
 	group.add( namsan );
 	group.add( buildLotteTower() );
 	group.add( build63() );
 	group.add( buildMountains() );
-	group.add( buildRiver() );
-
-	const hx = cityBounds.x + 50, hz = cityBounds.z + 50;
-	const exclude = ( x, z ) => (
-		( Math.abs( x ) < hx && Math.abs( z ) < hz ) || // 도시
-		( Math.hypot( ( x - NAMSAN.x ) / 640, ( z - NAMSAN.z ) / 520 ) < 1 ) || // 남산
-		( z > 800 && z < 1720 ) || // 한강
-		Math.hypot( x - 2300, z - 380 ) < 160 || Math.hypot( x + 1900, z - 830 ) < 120
-	);
-
-	group.add( buildApartments( exclude ) );
 
 	return group;
 

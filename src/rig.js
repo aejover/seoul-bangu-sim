@@ -1,7 +1,8 @@
 import * as THREE from 'three/webgpu';
 
-// three.js 저장소의 r187 태그로 고정한 CDN (threejs.org 는 릴리스마다 파일이 바뀔 수 있다)
-export const ASSETS = 'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r187/examples/';
+// three.js 예제 모델은 저장소 안 assets/ 에 함께 둔다
+// (jsDelivr 의 GitHub 경로가 가끔 403 을 돌려줘서 페이지가 아예 안 열리던 문제)
+export const ASSETS = new URL( '../assets/', import.meta.url ).href;
 
 // 포즈를 계산하는 19개 관절 (이름, 부모, 시작 관절, 끝 관절).
 // 실제 뼈대(soldier.js 의 Mixamo 뼈)에는 여기서 나온 회전을 옮겨 심는다.

@@ -74,6 +74,9 @@ export class Character {
 		this.blinkTimer = 2;
 		this.time = 0;
 		this.relief = 0;
+		this.dancing = false;
+		this.danceBlend = 0;
+		this.danceTime = 0;
 
 		this.nozzle = new THREE.Object3D();
 		this.jetDirection = new THREE.Vector3( 0, - 0.8, - 0.6 );
@@ -142,6 +145,66 @@ export class Character {
 		// 서 있는 기본 자세 (걷는 동작은 애니메이션이 맡는다)
 		const P = walkPose( t, 0, 0 );
 		const move = THREE.MathUtils.clamp( this.speed / 1.4, 0, 1 );
+
+		// ---- 춤: 120 BPM, 8박자(4초)마다 동작이 바뀐다 (만세 펌프 → 디스코 손가락 → 무릎 바운스 웨이브)
+		const dance = this.danceBlend;
+
+		if ( dance > 0.001 ) {
+
+			const beat = this.danceTime * 2; // 박자 수
+			const b = beat * Math.PI; // 한 박자에 반 바퀴
+			const bounce = Math.abs( Math.sin( b ) );
+			const step = Math.floor( beat / 8 ) % 3;
+			const side = Math.sin( b * 0.5 );
+			const D = walkPose( t, 0, 0 );
+
+			D.hipsOffset.y = - 0.06 * bounce;
+			D.hips.set( 0.04, side * 0.25, side * 0.1 );
+			D.spine.set( 0.05 * bounce, - side * 0.15, - side * 0.08 );
+			D.head.set( - 0.1 * bounce, side * 0.3, side * 0.15 );
+
+			for ( const [ s, sg ] of [ [ 'L', 1 ], [ 'R', - 1 ] ] ) {
+
+				// 무릎을 박자에 맞춰 굽혔다 편다
+				const knee = 0.25 + 0.35 * bounce;
+				D[ s + '_thigh' ] = limb( knee * 0.6, 0.12, sg );
+				D[ s + '_shin' ] = limb( - knee * 0.5, 0.06, sg );
+
+				if ( step === 0 ) {
+
+					// 양손 번갈아 하늘로 펌프
+					const up = Math.max( 0, Math.sin( b + ( sg > 0 ? 0 : Math.PI ) ) );
+					D[ s + '_upperArm' ] = limb( 0.3 + up * 2.5, 0.35, sg );
+					D[ s + '_forearm' ] = limb( 0.6 + up * 2.4, 0.25, sg );
+
+				} else if ( step === 1 ) {
+
+					// 디스코: 한 손은 위로 비스듬히 찌르고 다른 손은 허리
+					const point = ( Math.floor( beat / 2 ) % 2 === 0 ) === ( sg > 0 );
+					D[ s + '_upperArm' ] = point ? limb( 2.3, 0.6, sg ) : limb( 0.3, 0.6, sg );
+					D[ s + '_forearm' ] = point ? limb( 2.6, 0.5, sg ) : limb( 1.8, - 0.9, sg );
+
+				} else {
+
+					// 웨이브: 양팔을 옆으로 뻗고 물결치듯
+					const wave = Math.sin( b + ( sg > 0 ? 0 : 1.2 ) );
+					D[ s + '_upperArm' ] = limb( 0.2, 1.45 + wave * 0.35, sg );
+					D[ s + '_forearm' ] = limb( 0.2 + wave * 0.6, 1.5 - wave * 0.6, sg );
+
+				}
+
+			}
+
+			for ( const k of Object.keys( D ) ) {
+
+				if ( D[ k ].isVector3 && P[ k ] && P[ k ].isVector3 && k !== 'hipsOffset' ) P[ k ] = lerpV( P[ k ], D[ k ], dance );
+				else if ( D[ k ].isEuler ) P[ k ].set( THREE.MathUtils.lerp( P[ k ].x, D[ k ].x, dance ), THREE.MathUtils.lerp( P[ k ].y, D[ k ].y, dance ), THREE.MathUtils.lerp( P[ k ].z, D[ k ].z, dance ) );
+
+			}
+
+			P.hipsOffset.lerp( D.hipsOffset, dance );
+
+		}
 
 		// ---- 방구 자세: 엉덩이 쭉, 한쪽 다리 들기, 팔 벌려 균형
 		const fb = this.fartBlend * ( 1 - this.flyBlend );
@@ -385,6 +448,11 @@ export class Character {
 
 		// ---- 애니메이션 상태 블렌딩
 		const k = Math.min( 1, dt * 7 );
+
+		// 춤은 걷기 시작하거나 방구를 뀌거나 날아가면 멈춘다
+		if ( this.dancing && ( input.move.lengthSq() > 0.01 || farting || this.state !== 'ground' ) ) this.dancing = false;
+		this.danceTime = this.dancing ? this.danceTime + dt : 0;
+		this.danceBlend = THREE.MathUtils.lerp( this.danceBlend, this.dancing ? 1 : 0, Math.min( 1, dt * 6 ) );
 		this.fartBlend = THREE.MathUtils.lerp( this.fartBlend, farting && this.state === 'ground' ? 1 : 0, Math.min( 1, dt * 10 ) );
 		this.flyBlend = THREE.MathUtils.lerp( this.flyBlend, this.state === 'air' ? 1 : 0, k );
 		this.downBlend = THREE.MathUtils.lerp( this.downBlend, this.state === 'down' ? 1 : 0, Math.min( 1, dt * ( this.state === 'down' ? 9 : 3 ) ) );
@@ -398,7 +466,7 @@ export class Character {
 		// 걷기·달리기는 Soldier 애니메이션, 방구·비행·쓰러짐 자세는 포즈 풀이를 그 위에 섞는다
 		this.body.locomote( dt, this.speed );
 		const relief = this.relief > 0 ? Math.sin( Math.min( 1, this.relief ) * Math.PI ) : 0;
-		const procedural = Math.min( 1, Math.max( this.fartBlend, this.flyBlend, this.downBlend, this.state === 'getup' ? 1 - this.stateTime / 0.9 : 0, relief * 0.8 ) );
+		const procedural = Math.min( 1, Math.max( this.fartBlend, this.flyBlend, this.downBlend, this.danceBlend, this.state === 'getup' ? 1 - this.stateTime / 0.9 : 0, relief * 0.8 ) );
 
 		if ( procedural > 0.002 ) {
 

@@ -50,6 +50,7 @@ let nearCar = null;
 const directorEvents = [];
 const droneInput = { forward: 0, right: 0, up: 0, fast: false };
 let firstFrameTime = 0;
+let recording = false;
 let loadingDone = false;
 
 const keys = {};
@@ -528,6 +529,28 @@ function setupUI() {
 
 	} );
 
+	$( 'danceButton' ).addEventListener( 'click', () => {
+
+		sound.unlock();
+		toggleDance();
+
+	} );
+
+	$( 'recordButton' ).addEventListener( 'click', () => setRecording( true ) );
+
+	// 드론 속도
+	$( 'droneSpeed' ).addEventListener( 'input', () => setDroneSpeed( parseFloat( $( 'droneSpeed' ).value ) ) );
+
+	// 폰에는 Enter 가 없으니 화면을 두 번 톡톡 치면 녹화 모드가 끝난다
+	let lastTap = 0;
+	renderer.domElement.addEventListener( 'pointerup', ( e ) => {
+
+		if ( ! recording || e.pointerType !== 'touch' ) return;
+		if ( performance.now() - lastTap < 300 ) setRecording( false );
+		lastTap = performance.now();
+
+	} );
+
 	$( 'resetButton' ).addEventListener( 'click', () => {
 
 		sound.unlock();
@@ -634,10 +657,35 @@ function toggleCar() {
 
 }
 
+function toggleDance() {
+
+	if ( traffic.player || me.state !== 'ground' ) return;
+	me.dancing = ! me.dancing;
+
+}
+
+// 녹화 모드: 설정·글자를 모두 숨기고 시뮬레이션 화면만 (카메라 시점은 그대로)
+function setRecording( on ) {
+
+	recording = on;
+	document.body.classList.toggle( 'recording', on );
+	if ( on && document.activeElement ) document.activeElement.blur();
+
+}
+
+function setDroneSpeed( v ) {
+
+	director.drone.speed = THREE.MathUtils.clamp( v, 2, 60 );
+	$( 'droneSpeed' ).value = director.drone.speed;
+	$( 'droneSpeedValue' ).textContent = `${ Math.round( director.drone.speed ) } m/s`;
+
+}
+
 // 나만 처음 자리로 (R)
 function returnHome() {
 
 	if ( traffic.player ) toggleCar();
+	me.dancing = false;
 	me.position.copy( SPAWN );
 	me.velocity.set( 0, 0, 0 );
 	me.yaw = Math.PI;
@@ -694,7 +742,18 @@ function setupInput() {
 
 		}
 
-		const digit = /^Digit([1-6])$/.exec( e.code );
+		if ( e.code === 'Enter' && recording ) {
+
+			e.preventDefault();
+			setRecording( false );
+
+		}
+
+		if ( e.code === 'KeyG' && ! e.repeat ) toggleDance();
+		if ( e.code === 'BracketLeft' ) setDroneSpeed( director.drone.speed / 1.25 );
+		if ( e.code === 'BracketRight' ) setDroneSpeed( director.drone.speed * 1.25 );
+
+		const digit = /^Digit([1-7])$/.exec( e.code );
 		if ( digit && ! e.repeat ) setCameraMode( CAMERA_MODES[ digit[ 1 ] - 1 ].id );
 		if ( e.code === 'Tab' ) {
 
@@ -970,6 +1029,7 @@ function animate() {
 	$( 'tankBar' ).style.width = `${ fart.tank * 100 }%`;
 	$( 'tankText' ).textContent = `${ Math.round( fart.tank * 100 ) }%`;
 	$( 'panel' ).classList.toggle( 'empty', fart.tank < 0.02 );
+	$( 'danceButton' ).classList.toggle( 'on', me.dancing );
 
 	// 카메라: 나를 따라가고, 벽에 막히면 당겨지고, 방구 세기만큼 흔들린다
 	const target = me.position.clone().add( new THREE.Vector3( 0, me.state === 'down' ? 0.4 : ( driving ? 1.2 : 1.3 ), 0 ) );
